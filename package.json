@@ -1,0 +1,7 @@
+{
+  "name": "orbite-8d",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}

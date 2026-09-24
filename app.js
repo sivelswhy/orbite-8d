@@ -666,7 +666,8 @@ async function loadFile(file) {
 ui.file.addEventListener("change", () => loadFile(ui.file.files[0]));
 
 // ---------- Import par lien ----------
-const URL_HINT = "Lien direct vers un fichier audio, ou lien de partage Dropbox.";
+const URL_HINT = "Lien direct audio, Dropbox ou YouTube. YouTube est converti en MP3 par le serveur local.";
+const YOUTUBE_AUDIO_ENDPOINT = "/api/youtube-audio";
 
 function urlMessage(text, isError) {
   const el = $("urlMsg");
@@ -679,7 +680,7 @@ function normalizeAudioUrl(raw) {
   const u = new URL(raw.trim());
   if (!/^https?:$/.test(u.protocol)) throw new Error("protocol");
   const host = u.hostname.replace(/^www\./, "");
-  if (/(^|\.)youtube\.com$|^youtu\.be$|(^|\.)youtube-nocookie\.com$/.test(host)) throw new Error("youtube");
+  if (/(^|\.)youtube\.com$|^youtu\.be$|(^|\.)youtube-nocookie\.com$/.test(host)) return u.toString();
   if (host === "dropbox.com") {
     u.hostname = "dl.dropboxusercontent.com";
     u.searchParams.delete("dl");
@@ -691,24 +692,28 @@ function normalizeAudioUrl(raw) {
 
 async function loadUrl(raw) {
   let url;
+  let isYouTube = false;
   try {
     url = normalizeAudioUrl(raw);
+    isYouTube = /(^|\.)youtube\.com$|^youtu\.be$|(^|\.)youtube-nocookie\.com$/
+      .test(new URL(url).hostname.replace(/^www\./, ""));
   } catch (e) {
-    urlMessage(e.message === "youtube"
-      ? "Les liens YouTube ne sont pas pris en charge. Utilise un lien vers un fichier audio."
-      : "Lien invalide.", true);
+    urlMessage("Lien invalide.", true);
     return;
   }
   const btn = $("urlBtn");
   btn.disabled = true;
   urlMessage("Téléchargement…");
   try {
-    const res = await fetch(url);
+    const requestUrl = isYouTube
+      ? `${YOUTUBE_AUDIO_ENDPOINT}?url=${encodeURIComponent(url)}`
+      : url;
+    const res = await fetch(requestUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const type = res.headers.get("content-type") || "";
-    if (type.startsWith("text/html")) throw new Error("html");
+    if (type.startsWith("text/html") || type.includes("application/json")) throw new Error("html");
     const buf = await ctx.decodeAudioData(await res.arrayBuffer());
-    const name = decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
+    const name = isYouTube ? "youtube-audio" : decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
     setBuffer(buf, name);
     ui.title.value = name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").slice(0, 60);
     ui.artist.value = "";
