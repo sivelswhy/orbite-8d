@@ -1,6 +1,7 @@
 "use strict";
 
-const { spawn } = require("child_process");
+const youtubedl = require("youtube-dl-exec");
+const ffmpegPath = require("ffmpeg-static");
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "youtu.be", "youtube-nocookie.com"]);
 
@@ -40,17 +41,16 @@ module.exports = function youtubeAudio(req, res) {
     return res.end("A valid HTTPS YouTube URL is required");
   }
 
-  const args = [
-    "--no-playlist",
-    "--no-warnings",
-    "--format", "bestaudio/best",
-    "--extract-audio",
-    "--audio-format", "mp3",
-    "--audio-quality", "0",
-    "--output", "-",
-    url,
-  ];
-  const process = spawn("yt-dlp", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const process = youtubedl.exec(url, {
+    noPlaylist: true,
+    noWarnings: true,
+    format: "bestaudio/best",
+    extractAudio: true,
+    audioFormat: "mp3",
+    audioQuality: "0",
+    output: "-",
+    ffmpegLocation: ffmpegPath,
+  }, { stdio: ["ignore", "pipe", "pipe"] });
   const output = [];
   let errorOutput = "";
   let responded = false;
@@ -61,7 +61,7 @@ module.exports = function youtubeAudio(req, res) {
     if (responded) return;
     responded = true;
     const message = error.code === "ENOENT"
-      ? "yt-dlp is not installed on the server"
+      ? "YouTube converter binary is not available"
       : "Unable to start audio conversion";
     res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
     res.end(message);

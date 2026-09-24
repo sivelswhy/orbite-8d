@@ -7,14 +7,14 @@ Interface statique avec une petite API Node pour les liens YouTube.
 ## Lancer en local
 
 ```sh
-brew install yt-dlp ffmpeg
+npm install
 node server.js
 # puis http://localhost:8000
 ```
 
 ## Déployer
 
-Le serveur YouTube nécessite un hébergement qui autorise `yt-dlp` et `ffmpeg`. Vercel ne fournit pas ces binaires par défaut ; pour un déploiement statique, garde uniquement les imports de fichiers et de liens audio directs.
+Le serveur YouTube utilise `youtube-dl-exec` et `ffmpeg-static`, installés automatiquement par `npm install` et lors du build Vercel. La conversion dépend des limites de durée et de taille de la fonction Vercel.
 
 ## Fonctionnement
 
