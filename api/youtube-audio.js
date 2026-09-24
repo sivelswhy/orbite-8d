@@ -1,6 +1,8 @@
 "use strict";
 
 const { Readable } = require("stream");
+const { spawn } = require("child_process");
+const ffmpegPath = require("ffmpeg-static");
 
 const VIDKRAKEN_API = "https://vidkraken.com/api/v2/download";
 
@@ -87,13 +89,26 @@ module.exports = async function youtubeAudio(req, res) {
     const downloadUrl = await createVidKrakenDownload(url, apiKey);
     const audioResponse = await fetch(downloadUrl);
     if (!audioResponse.ok || !audioResponse.body) throw new Error("VidKraken file unavailable");
+    const ffmpeg = spawn(ffmpegPath, [
+      "-i", "pipe:0", "-f", "mp3", "-acodec", "libmp3lame", "-q:a", "2", "pipe:1",
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+    let ffmpegError = "";
+    ffmpeg.stderr.on("data", (chunk) => { ffmpegError += chunk.toString(); });
+    ffmpeg.on("error", (error) => {
+      if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(error.message);
+    });
     res.writeHead(200, {
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": "no-store",
       "Content-Type": "audio/mpeg",
       "Content-Disposition": "attachment; filename=\"youtube-audio.mp3\"",
     });
-    return Readable.fromWeb(audioResponse.body).pipe(res);
+    ffmpeg.on("close", (code) => {
+      if (code !== 0 && !res.writableEnded) res.end(ffmpegError || "Audio conversion failed");
+    });
+    Readable.fromWeb(audioResponse.body).pipe(ffmpeg.stdin);
+    return ffmpeg.stdout.pipe(res);
   } catch (error) {
     res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end(error.message || "VidKraken download failed");
