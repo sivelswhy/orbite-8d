@@ -12,7 +12,8 @@ const ui = {
   speed: $("speed"), intensity: $("intensity"), reverb: $("reverb"),
   speedOut: $("speedOut"), intensityOut: $("intensityOut"), reverbOut: $("reverbOut"),
   showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
-  showLyrics: $("showLyrics"), lyricsOffset: $("lyricsOffset"), lyricsOffsetOut: $("lyricsOffsetOut"),
+  showLyrics: $("showLyrics"), lyricsOffset: $("lyricsOffset"), lyricsOffsetText: $("lyricsOffsetText"),
+  lyricsLine: $("lyricsLine"), lyricsNow: $("lyricsNow"),
   start: $("start"), startTime: $("startTime"), endTime: $("endTime"), duration: $("duration"), excerptInfo: $("excerptInfo"),
   rate: $("rate"), rateOut: $("rateOut"), keepPitch: $("keepPitch"),
   pos: $("pos"), posTime: $("posTime"),
@@ -101,6 +102,7 @@ function stopSource() {
   onExcerptEnd = null;
   playing = false;
   ui.play.textContent = "▶ Écouter";
+  updateLyricsNow();
   drawWave();
 }
 
@@ -124,6 +126,7 @@ function startSource(onEnd, { live = false } = {}) {
   introTimer = setTimeout(() => player.play().catch(() => {}), introLength * 1000);
   playing = true;
   ui.play.textContent = "■ Stop";
+  updateLyricsNow();
   requestAnimationFrame(waveLoop);
 }
 
@@ -328,6 +331,7 @@ function setBuffer(buf, name) {
   sel = { start: 0, end: 0 };
   cursor = null;
   setLyrics([], "");
+  setLyricsOffset(0);
   $("lyricsText").value = "";
   updateDurationOptions();
   ui.fileName.textContent = name;
@@ -839,6 +843,25 @@ function lyricsMessage(text) {
 function setLyrics(lines, message) {
   lyrics = lines;
   if (message) lyricsMessage(message);
+  fillLyricsLines();
+}
+
+// Reference lines for "C'est maintenant" (non-empty lines, with their time).
+function fillLyricsLines() {
+  ui.lyricsLine.innerHTML = "";
+  lyrics.forEach((l, i) => {
+    if (!l.text) return;
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = `${fmt(l.t)} — ${l.text}`;
+    ui.lyricsLine.appendChild(o);
+  });
+  ui.lyricsLine.disabled = !ui.lyricsLine.options.length;
+  updateLyricsNow();
+}
+
+function updateLyricsNow() {
+  ui.lyricsNow.disabled = !ui.lyricsLine.options.length || !playing;
 }
 
 // "[01:23.45] text" lines → [{ t, text }]; several stamps per line are allowed.
@@ -874,13 +897,45 @@ async function findLyrics() {
   }
 }
 
-function syncLyricsOffset() {
-  const v = +ui.lyricsOffset.value;
-  ui.lyricsOffsetOut.textContent = `${v > 0 ? "+" : ""}${v.toFixed(1)} s`;
+// Offset in seconds added to the playback time: positive = lyrics come earlier.
+const LYRICS_OFFSET_MAX = 60;
+function setLyricsOffset(v) {
+  v = Math.round(Math.max(-LYRICS_OFFSET_MAX, Math.min(LYRICS_OFFSET_MAX, v)) * 10) / 10;
+  ui.lyricsOffset.value = v;
+  if (document.activeElement !== ui.lyricsOffsetText) ui.lyricsOffsetText.value = `${v > 0 ? "+" : ""}${v.toFixed(1)} s`;
 }
-ui.lyricsOffset.addEventListener("input", syncLyricsOffset);
-ui.lyricsOffset.addEventListener("dblclick", () => { ui.lyricsOffset.value = 0; syncLyricsOffset(); });
-syncLyricsOffset();
+ui.lyricsOffset.addEventListener("input", () => setLyricsOffset(+ui.lyricsOffset.value));
+ui.lyricsOffset.addEventListener("dblclick", () => setLyricsOffset(0));
+
+// Typed as "+2.5", "-12" or "3,5 s"; Enter applies, Escape reverts, arrows nudge.
+const offsetField = ui.lyricsOffsetText;
+function applyOffsetText() {
+  const v = parseFloat(offsetField.value.replace(",", ".").replace("−", "-").replace(/[^\d.+-]/g, ""));
+  offsetField.blur();
+  setLyricsOffset(Number.isFinite(v) ? v : +ui.lyricsOffset.value);
+}
+offsetField.addEventListener("focus", () => offsetField.select());
+offsetField.addEventListener("blur", applyOffsetText);
+offsetField.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") applyOffsetText();
+  else if (e.key === "Escape") { offsetField.value = ""; offsetField.blur(); }
+  else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    const v = +ui.lyricsOffset.value + (e.shiftKey ? 1 : 0.1) * (e.key === "ArrowUp" ? 1 : -1);
+    offsetField.blur();
+    setLyricsOffset(v);
+    offsetField.focus();
+  }
+});
+setLyricsOffset(0);
+
+// Tap-to-sync: the chosen line is being sung right now.
+ui.lyricsNow.addEventListener("click", () => {
+  const line = lyrics[+ui.lyricsLine.value];
+  if (!line || !playing || ctx.currentTime < playStartCtx) return;
+  setLyricsOffset(line.t - playPosition());
+  lyricsMessage(`Paroles recalées sur « ${line.text} » (décalage ${ui.lyricsOffsetText.value}).`);
+});
 
 $("lyricsApply").addEventListener("click", () => {
   const lines = parseLrc($("lyricsText").value);

@@ -59,9 +59,15 @@
         <h2>Paroles</h2>
         <label class="check"><input type="checkbox" id="showLyrics" checked /> Afficher les paroles</label>
         <p class="hint" id="lyricsMsg">Charge un morceau : les paroles synchronisées sont cherchées automatiquement.</p>
-        <label>Décalage <output id="lyricsOffsetOut"></output>
-          <input type="range" id="lyricsOffset" min="-5" max="5" step="0.1" value="0" title="Double-clic pour revenir à 0" />
+        <label>Décalage <input type="text" class="time" id="lyricsOffsetText" autocomplete="off" spellcheck="false"
+            title="En secondes (ex. +2.5 ou -12) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" />
+          <input type="range" id="lyricsOffset" min="-60" max="60" step="0.1" value="0" title="Double-clic pour revenir à 0" />
         </label>
+        <div class="lyrics-sync">
+          <select id="lyricsLine" aria-label="Ligne de référence"></select>
+          <button type="button" class="secondary small" id="lyricsNow" disabled>C'est maintenant</button>
+        </div>
+        <p class="hint">Paroles en avance ou en retard ? Choisis une ligne, lance l'écoute et clique sur « C'est maintenant » au moment où elle est chantée.</p>
         <details class="lyrics-paste">
           <summary>Coller des paroles synchronisées (LRC)</summary>
           <textarea id="lyricsText" rows="6" placeholder="[00:23.21] You know the rules and so do I"></textarea>
