@@ -46,6 +46,7 @@ module.exports = function youtubeAudio(req, res) {
   const args = [
     "--no-playlist", "--no-warnings", "--format", "bestaudio/best",
     "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
+    "--extractor-args", "youtube:player_client=android",
     "--ffmpeg-location", ffmpegPath, "--output", "-", url,
   ];
   const process = spawn(ytdlpPath, args, { stdio: ["ignore", "pipe", "pipe"] });
