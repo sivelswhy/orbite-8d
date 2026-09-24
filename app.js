@@ -616,6 +616,21 @@ const scenes = [
   { id: "avion", name: "Vue d'avion" },
   { id: "miami", name: "Miami en voiture" },
   { id: "londres-knightsbridge", name: "Londres en voiture" },
+  // Cinematic FPV drone clips, cut from horizontal 4K videos (skipping the first 10 s) and cropped to 9:16.
+  { id: "madere-1", name: "Madère 1" },
+  { id: "madere-2", name: "Madère 2" },
+  { id: "madere-3", name: "Madère 3" },
+  { id: "le-puy-1", name: "Le Puy-en-Velay 1" },
+  { id: "le-puy-2", name: "Le Puy-en-Velay 2" },
+  { id: "le-puy-3", name: "Le Puy-en-Velay 3" },
+  { id: "le-puy-4", name: "Le Puy-en-Velay 4" },
+  { id: "venise-1", name: "Venise 1" },
+  { id: "venise-2", name: "Venise 2" },
+  { id: "venise-3", name: "Venise 3" },
+  { id: "venise-4", name: "Venise 4" },
+  { id: "istanbul-1", name: "Istanbul 1" },
+  { id: "istanbul-2", name: "Istanbul 2" },
+  { id: "istanbul-3", name: "Istanbul 3" },
 ];
 const CROSSFADE_MS = 400;
 
