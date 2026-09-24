@@ -81,6 +81,7 @@ input[type="text"], select {
 .drop small { color: var(--muted); word-break: break-all; }
 
 .url-row { display: flex; gap: 8px; margin-top: 10px; }
+.url-label { margin: 16px 0 0; color: var(--text); font-weight: 600; }
 .url-row input {
   flex: 1;
   min-width: 0;

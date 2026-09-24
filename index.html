@@ -25,9 +25,10 @@
           <strong>Dépose un mp3, m4a ou wav</strong>
           <small id="fileName">Son démo chargé</small>
         </label>
+        <label class="url-label" for="url">Importer depuis YouTube ou un lien audio</label>
         <form class="url-row" id="urlForm">
-          <input type="url" id="url" placeholder="…ou colle un lien YouTube ou audio" />
-          <button type="submit" class="secondary small" id="urlBtn">Charger</button>
+          <input type="url" id="url" placeholder="Colle ton lien YouTube ici" aria-label="Lien YouTube ou audio" />
+          <button type="submit" class="secondary small" id="urlBtn">Importer</button>
         </form>
         <p class="hint" id="urlMsg">Lien direct audio, Dropbox ou YouTube. YouTube est converti en MP3 par le serveur local.</p>
         <p class="hint">Les fichiers locaux restent dans ton navigateur. Pour YouTube, seul le téléchargement demandé passe par le serveur.</p>
