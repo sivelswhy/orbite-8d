@@ -25,3 +25,7 @@ Variables facultatives : `YTDLP_PATH` et `FFMPEG_PATH` (binaires hors du PATH), 
 - **Intro** : carte « Put on your headphones » de 1,5 s avant la musique, avec une icône AirPods Pro (SVG Repo, `assets/airpods.svg`).
 - **TikTok** : après l'export, « Préparer sur TikTok » ouvre un Chromium (Playwright) qui envoie la vidéo et remplit la légende, puis s'arrête : tu cliques toi-même sur « Publier » dans TikTok. Connexion à TikTok faite une fois à la main ; session gardée dans `~/.orbite-8d/tiktok-profile`. Première installation : `npm install && npx playwright install chromium`. Si TikTok change sa page, corrige `SELECTORS` dans `api/tiktok.js`.
 - **Export** : `canvas.captureStream` + `MediaRecorder`, MP4 si le navigateur le permet (Safari, Chrome récent), sinon WebM. Enregistrement en temps réel, onglet au premier plan.
+
+## Licence
+
+Usage personnel et non commercial uniquement ; redistribution interdite. Voir [LICENSE](LICENSE). Les musiques, paroles et vidéos utilisées restent la propriété de leurs auteurs.

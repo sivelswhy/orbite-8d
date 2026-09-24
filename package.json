@@ -1,6 +1,7 @@
 {
   "name": "orbite-8d",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/**/*.test.js"
