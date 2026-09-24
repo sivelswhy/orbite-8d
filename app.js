@@ -709,9 +709,11 @@ async function loadUrl(raw) {
       ? `${YOUTUBE_AUDIO_ENDPOINT}?url=${encodeURIComponent(url)}`
       : url;
     const res = await fetch(requestUrl);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const type = res.headers.get("content-type") || "";
-    if (type.startsWith("text/html") || type.includes("application/json")) throw new Error("html");
+    if (!res.ok || !type.startsWith("audio/")) {
+      const detail = (await res.text()).trim();
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
     const buf = await ctx.decodeAudioData(await res.arrayBuffer());
     const name = isYouTube ? "youtube-audio" : decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
     setBuffer(buf, name);
@@ -721,9 +723,7 @@ async function loadUrl(raw) {
   } catch (e) {
     urlMessage(e instanceof TypeError
       ? "Le site qui héberge ce fichier bloque son chargement depuis une autre page. Essaie un lien Dropbox ou un autre hébergeur."
-      : e.message === "html"
-        ? "Ce lien mène à une page web, pas à un fichier audio."
-        : "Impossible de lire ce fichier audio.", true);
+      : e.message || "Impossible de lire ce fichier audio.", true);
   } finally {
     btn.disabled = false;
   }
