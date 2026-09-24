@@ -715,9 +715,10 @@ async function loadUrl(raw) {
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const buf = await ctx.decodeAudioData(await res.arrayBuffer());
-    const name = isYouTube ? "youtube-audio" : decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
+    const ytTitle = isYouTube ? decodeURIComponent(res.headers.get("x-audio-title") || "") : "";
+    const name = isYouTube ? ytTitle || "youtube-audio" : decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
     setBuffer(buf, name);
-    ui.title.value = name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").slice(0, 60);
+    ui.title.value = (isYouTube ? name : name.replace(/\.[^.]+$/, "")).replace(/[_]+/g, " ").slice(0, 60);
     ui.artist.value = "";
     urlMessage(URL_HINT);
   } catch (e) {

@@ -7,14 +7,30 @@ Interface statique avec une petite API Node pour les liens YouTube.
 ## Lancer en local
 
 ```sh
-npm install
+brew install yt-dlp ffmpeg   # requis pour les liens YouTube
 node server.js
 # puis http://localhost:8000
 ```
 
+Variables facultatives : `YTDLP_PATH` et `FFMPEG_PATH` (binaires hors du PATH), `YTDLP_COOKIES` (fichier cookies.txt si YouTube demande une connexion).
+
 ## Déployer
 
-Le serveur YouTube utilise `youtube-dl-exec` et `ffmpeg-static`, installés automatiquement par `npm install` et lors du build Vercel. La conversion dépend des limites de durée et de taille de la fonction Vercel.
+Google bloque yt-dlp sur les IP Vercel. Sur Vercel, `/api/youtube-audio` redirige donc le navigateur vers un serveur yt-dlp externe (ton Mac, un Raspberry Pi, un VPS…). L’URL est signée en HMAC pour que ce serveur ne réponde qu’aux requêtes venant du site.
+
+1. Sur la machine qui télécharge (IP résidentielle de préférence) :
+
+   ```sh
+   brew install yt-dlp ffmpeg cloudflared
+   YTDLP_BACKEND_SECRET=<secret> node server.js
+   cloudflared tunnel --url http://localhost:8000   # affiche une URL https://….trycloudflare.com
+   ```
+
+2. Dans Vercel → Settings → Environment Variables, puis redéploie :
+   - `YTDLP_BACKEND_URL` : l’URL https du tunnel ou du serveur
+   - `YTDLP_BACKEND_SECRET` : le même secret (`openssl rand -hex 32`)
+
+L’URL `trycloudflare.com` change à chaque redémarrage du tunnel. Pour une URL fixe, utilise un tunnel Cloudflare nommé ou un VPS. Sans ces variables, l’API répond 503 sur Vercel.
 
 ## Fonctionnement
 
