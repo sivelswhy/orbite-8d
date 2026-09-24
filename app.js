@@ -13,7 +13,8 @@ const ui = {
   speedOut: $("speedOut"), intensityOut: $("intensityOut"), reverbOut: $("reverbOut"),
   showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
   start: $("start"), startOut: $("startOut"), duration: $("duration"), excerptInfo: $("excerptInfo"),
-  rate: $("rate"), rateOut: $("rateOut"),
+  rate: $("rate"), rateOut: $("rateOut"), keepPitch: $("keepPitch"),
+  pos: $("pos"), posOut: $("posOut"),
   play: $("play"), exportBtn: $("export"), cancel: $("cancel"),
   progress: $("progress"), progressBar: $("progressBar"), progressText: $("progressText"),
   download: $("download"), format: $("format"),
@@ -73,22 +74,30 @@ function applyMix() {
 
 // ---------- Track state ----------
 let buffer = null;
-let source = null;
+// The track plays through an <audio> element feeding the graph above: its
+// playbackRate can keep the pitch (preservesPitch), like TikTok's speed setting.
+const player = new Audio();
+player.preload = "auto";
+const playerNode = ctx.createMediaElementSource(player);
+playerNode.connect(lowpass);
+playerNode.connect(highpass);
+playerNode.connect(analyser);
+let playerUrl = null;
 let playing = false;
 let angle = 0;
-let playStartCtx = 0; // ctx time when the current excerpt started (adjusted on speed changes)
+let playStartCtx = 0; // ctx time when the music starts (after the intro)
 let introLength = 0; // seconds of intro card shown before the music, for the current playback
+let introTimer = null;
+let onExcerptEnd = null;
+let cursor = null; // where "Écouter" resumes (track seconds); null = start of the excerpt
 const INTRO_SECONDS = 1.5;
 let excerpt = { start: 0, length: 30 };
 let sel = { start: 0, end: 30 }; // chosen range in seconds; excerpt is derived from it
 
 function stopSource() {
-  if (source) {
-    source.onended = null;
-    try { source.stop(); } catch (_) {}
-    source.disconnect();
-    source = null;
-  }
+  clearTimeout(introTimer);
+  player.pause();
+  onExcerptEnd = null;
   playing = false;
   ui.play.textContent = "▶ Écouter";
   drawWave();
@@ -99,40 +108,102 @@ function stopSource() {
 function startSource(onEnd, { live = false } = {}) {
   stopSource();
   computeExcerpt();
-  source = new AudioBufferSourceNode(ctx, { buffer, playbackRate: rate() });
-  source.connect(lowpass);
-  source.connect(highpass);
-  source.connect(analyser);
+  // Resuming from the playback cursor skips the intro; exports always start at the beginning.
+  const from = onEnd || cursor === null ? excerpt.start : cursor;
+  const fromStart = from <= excerpt.start + 0.05;
   if (!live) {
     angle = 0;
     restartScenes();
   }
-  introLength = !live && ui.showIntro.checked ? INTRO_SECONDS : 0;
-  playStartCtx = ctx.currentTime + 0.05 + introLength;
-  source.start(playStartCtx, excerpt.start, excerpt.length);
-  source.onended = () => { stopSource(); onEnd && onEnd(); };
+  introLength = !live && fromStart && ui.showIntro.checked ? INTRO_SECONDS : 0;
+  playStartCtx = ctx.currentTime + introLength;
+  applyRate();
+  player.currentTime = from;
+  onExcerptEnd = onEnd || (() => {});
+  introTimer = setTimeout(() => player.play().catch(() => {}), introLength * 1000);
   playing = true;
   ui.play.textContent = "■ Stop";
   requestAnimationFrame(waveLoop);
 }
 
-// Playback speed of the excerpt (changes pitch too, like "slowed" / "sped up" edits).
-// Restarts the playing excerpt after a change of start/end/duration (debounced for sliders).
+// After a change of start/end/duration while listening, keep playing from the
+// same spot; if it is now outside the excerpt, jump to its start, or to 3 s
+// before its new end to hear the cut.
 let relaunchTimer = null;
 function relaunchIfPlaying() {
   clearTimeout(relaunchTimer);
   relaunchTimer = setTimeout(() => {
-    if (playing && !recording) startSource(null, { live: true });
+    if (!playing || recording) return;
+    const end = excerpt.start + excerpt.length;
+    const t = player.currentTime;
+    if (t < excerpt.start) player.currentTime = excerpt.start;
+    else if (t >= end) player.currentTime = Math.max(excerpt.start, end - 3);
   }, 120);
 }
 
+// Playback speed of the excerpt. With "Garder la tonalité" the voice keeps its
+// pitch; without it, it gets higher/lower like "sped up" / "slowed" edits.
 function rate() {
   return +ui.rate.value;
 }
 
+function applyRate() {
+  player.playbackRate = rate();
+  player.preservesPitch = player.webkitPreservesPitch = ui.keepPitch.checked;
+}
+
+// Safari only lets a media element play later (after the intro) if it was
+// first started by a click: play it muted once, from the click handlers.
+function unlockPlayer() {
+  if (player.dataset.unlocked) return;
+  player.dataset.unlocked = "1";
+  player.muted = true;
+  player.play()
+    .then(() => { if (!playing || ctx.currentTime < playStartCtx) player.pause(); }) // silent during the intro
+    .catch(() => {})
+    .finally(() => { player.muted = false; });
+}
+
+// Stops at the end of the excerpt (checked on timeupdate and every frame).
+function checkExcerptEnd() {
+  if (!playing || !onExcerptEnd || ctx.currentTime < playStartCtx) return;
+  if (player.ended || player.currentTime >= excerpt.start + excerpt.length) {
+    const done = onExcerptEnd;
+    stopSource();
+    cursor = null;
+    syncCursor();
+    done();
+  }
+}
+player.addEventListener("timeupdate", checkExcerptEnd);
+player.addEventListener("ended", checkExcerptEnd);
+
 // Position in the track (seconds) of what is playing now.
 function playPosition() {
-  return excerpt.start + Math.max(0, ctx.currentTime - playStartCtx) * rate();
+  return playing && ctx.currentTime >= playStartCtx ? player.currentTime : excerpt.start;
+}
+
+// 16-bit PCM WAV of a decoded buffer, so the <audio> element can play any source.
+function bufferToWav(buf) {
+  const channels = buf.numberOfChannels, frames = buf.length, bytes = frames * channels * 2;
+  const view = new DataView(new ArrayBuffer(44 + bytes));
+  const text = (o, s) => [...s].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)));
+  text(0, "RIFF"); view.setUint32(4, 36 + bytes, true); text(8, "WAVE");
+  text(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true); view.setUint32(24, buf.sampleRate, true);
+  view.setUint32(28, buf.sampleRate * channels * 2, true); view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true); text(36, "data"); view.setUint32(40, bytes, true);
+  const data = [];
+  for (let c = 0; c < channels; c++) data.push(buf.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < channels; c++) {
+      const v = Math.max(-1, Math.min(1, data[c][i]));
+      view.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return new Blob([view], { type: "audio/wav" });
 }
 
 function minExcerpt() {
@@ -153,6 +224,7 @@ function computeExcerpt() {
     `Extrait : ${fmt(excerpt.start)} → ${fmt(excerpt.start + excerpt.length)} sur ${fmt(total)} · ` +
     `vidéo de ${fmt(excerpt.length / rate())}${rate() === 1 ? "" : ` à ${rate().toFixed(2)}×`}` +
     (ui.showIntro.checked ? ` + ${String(INTRO_SECONDS).replace(".", ",")} s d'intro` : "");
+  syncCursor();
   drawWave();
 }
 
@@ -212,7 +284,11 @@ function updateDurationOptions() {
 function setBuffer(buf, name) {
   stopSource();
   buffer = buf;
+  if (playerUrl) URL.revokeObjectURL(playerUrl);
+  playerUrl = URL.createObjectURL(bufferToWav(buf));
+  player.src = playerUrl;
   sel = { start: 0, end: 0 };
+  cursor = null;
   updateDurationOptions();
   ui.fileName.textContent = name;
   levels = computeLevels(buf);
@@ -312,15 +388,41 @@ function drawWave() {
     waveG.fillStyle = HANDLE_COLOR;
   }
 
-  if (playing) {
-    const t = playPosition();
-    waveG.fillStyle = "#3de0d0";
+  if (playing || cursor !== null) {
+    const t = playing ? playPosition() : cursor;
+    waveG.fillStyle = playing ? "#3de0d0" : "rgba(61,224,208,0.6)";
     waveG.fillRect(Math.round((t / total) * w), 0, 2 * dpr, h);
   }
 }
 
+// ---------- Playback cursor ----------
+// Shows where the excerpt is playing; dragging it seeks (or sets where
+// "Écouter" resumes when stopped).
+let posDragging = false;
+function syncCursor() {
+  if (!buffer) return;
+  const end = excerpt.start + excerpt.length;
+  if (cursor !== null && (cursor < excerpt.start || cursor >= end)) cursor = null;
+  const t = playing && ctx.currentTime >= playStartCtx ? player.currentTime : cursor ?? excerpt.start;
+  ui.pos.min = excerpt.start.toFixed(2);
+  ui.pos.max = end.toFixed(2);
+  if (!posDragging) ui.pos.value = t;
+  ui.posOut.textContent = `${fmt(Math.max(0, t - excerpt.start))} / ${fmt(excerpt.length)}`;
+}
+
+ui.pos.addEventListener("input", () => {
+  posDragging = true;
+  const t = +ui.pos.value;
+  if (playing && ctx.currentTime >= playStartCtx) player.currentTime = t;
+  else cursor = t;
+  ui.posOut.textContent = `${fmt(t - excerpt.start)} / ${fmt(excerpt.length)}`;
+  drawWave();
+});
+ui.pos.addEventListener("change", () => { posDragging = false; });
+
 function waveLoop() {
   drawWave();
+  syncCursor();
   if (playing) requestAnimationFrame(waveLoop);
 }
 
@@ -728,6 +830,7 @@ function frame(now) {
   drawScene(bassLevel);
   drawOverlay(bassLevel);
   if (introLength && introLeft > 0) drawIntro(introLength - introLeft, introLength);
+  checkExcerptEnd();
   if (recording) updateProgress();
   requestAnimationFrame(frame);
 }
@@ -755,15 +858,15 @@ function updateProgress() {
     ui.progressText.textContent = "Enregistrement de l'intro…";
     return;
   }
-  const el = ctx.currentTime - playStartCtx;
-  const total = excerpt.length / rate();
-  const p = Math.min(1, el / total);
+  const done = Math.max(0, player.currentTime - excerpt.start);
+  const p = Math.min(1, done / excerpt.length);
   ui.progressBar.style.width = `${(p * 100).toFixed(1)}%`;
-  ui.progressText.textContent = `Enregistrement… ${fmt(el)} / ${fmt(total)}`;
+  ui.progressText.textContent = `Enregistrement… ${fmt(done / rate())} / ${fmt(excerpt.length / rate())}`;
 }
 
 async function startExport() {
   if (!buffer || recording) return;
+  unlockPlayer();
   await ctx.resume();
   await document.fonts.ready;
   if (ui.download.href) URL.revokeObjectURL(ui.download.href);
@@ -820,6 +923,7 @@ function setBusy(busy) {
   waveWrap.classList.toggle("disabled", busy);
   ui.duration.disabled = busy;
   ui.rate.disabled = busy;
+  ui.pos.disabled = busy;
   if (!busy) ui.progressBar.style.width = "0";
 }
 
@@ -856,19 +960,11 @@ function syncRate() {
   ui.rateOut.textContent = `${rate().toFixed(2)}×`;
   computeExcerpt();
 }
-let lastRate = rate();
 ui.rate.addEventListener("input", () => {
-  // Changing speed while playing: keep the playhead where it is (no shift during the intro).
-  if (source) {
-    source.playbackRate.setValueAtTime(rate(), ctx.currentTime);
-    if (ctx.currentTime > playStartCtx) {
-      const pos = excerpt.start + (ctx.currentTime - playStartCtx) * lastRate;
-      playStartCtx = ctx.currentTime - (pos - excerpt.start) / rate();
-    }
-  }
-  lastRate = rate();
+  applyRate();
   syncRate();
 });
+ui.keepPitch.addEventListener("change", applyRate);
 ui.rate.addEventListener("dblclick", () => {
   ui.rate.value = 1;
   ui.rate.dispatchEvent(new Event("input"));
@@ -876,9 +972,13 @@ ui.rate.addEventListener("dblclick", () => {
 syncRate();
 
 ui.play.addEventListener("click", async () => {
+  unlockPlayer();
   await ctx.resume();
-  if (playing) stopSource();
-  else if (buffer) startSource();
+  if (playing) {
+    if (ctx.currentTime >= playStartCtx) cursor = player.currentTime; // resume here next time
+    stopSource();
+    syncCursor();
+  } else if (buffer) startSource();
 });
 ui.exportBtn.addEventListener("click", startExport);
 ui.cancel.addEventListener("click", cancelExport);
