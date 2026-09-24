@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/**/*.js": {
-      "includeFiles": "node_modules/youtube-dl-exec/bin/**",
+      "includeFiles": "bin/yt-dlp",
       "maxDuration": 60
     }
   }
