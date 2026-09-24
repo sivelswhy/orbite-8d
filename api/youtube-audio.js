@@ -6,6 +6,15 @@ const ffmpegPath = require("ffmpeg-static");
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "youtu.be", "youtube-nocookie.com"]);
 
+function isVercelRuntime() {
+  return Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.NOW_REGION);
+}
+
+function getRuntimeBlockMessage() {
+  if (!isVercelRuntime()) return null;
+  return "YouTube est bloqué par les anti-bots de Google sur les IP Vercel. Utilise un serveur local, un backend privé ou une API autorisée pour télécharger de l’audio YouTube.";
+}
+
 function isYouTubeUrl(value) {
   try {
     const url = new URL(value);
@@ -22,7 +31,7 @@ function getUrl(req) {
   return parsed.searchParams.get("url");
 }
 
-module.exports = async function youtubeAudio(req, res) {
+async function youtubeAudio(req, res) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
@@ -40,6 +49,12 @@ module.exports = async function youtubeAudio(req, res) {
   if (!url || !isYouTubeUrl(url)) {
     res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end("A valid HTTPS YouTube URL is required");
+  }
+
+  const runtimeMessage = getRuntimeBlockMessage();
+  if (runtimeMessage) {
+    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end(runtimeMessage);
   }
 
   const ytdlpPath = path.join(__dirname, "../bin/yt-dlp");
@@ -71,4 +86,8 @@ module.exports = async function youtubeAudio(req, res) {
     res.end(Buffer.concat(output));
   });
   req.on("close", () => { if (!ytdlp.killed) ytdlp.kill(); });
-};
+}
+
+module.exports = youtubeAudio;
+module.exports.getRuntimeBlockMessage = getRuntimeBlockMessage;
+module.exports.isVercelRuntime = isVercelRuntime;
