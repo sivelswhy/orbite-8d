@@ -1,6 +1,9 @@
 {
   "version": 2,
   "functions": {
-    "api/**/*.js": { "maxDuration": 60 }
+    "api/**/*.js": {
+      "includeFiles": "bin/yt-dlp",
+      "maxDuration": 60
+    }
   }
 }
