@@ -18,9 +18,7 @@ function isYouTubeUrl(value) {
 }
 
 function getParam(req, name) {
-  if (req.query && req.query[name]) return req.query[name];
-  const parsed = new URL(req.url, "http://localhost");
-  return parsed.searchParams.get(name);
+  return new URL(req.url, "http://localhost").searchParams.get(name);
 }
 
 // yt-dlp and ffmpeg come from YTDLP_PATH / FFMPEG_PATH, else from the PATH
@@ -41,20 +39,11 @@ function getYtdlpArgs(url, outputDir) {
 
 function sendText(res, status, text) {
   if (res.headersSent) return res.end();
-  res.writeHead(status, { "Access-Control-Allow-Origin": "*", "Content-Type": "text/plain; charset=utf-8" });
+  res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
   res.end(text);
 }
 
 async function youtubeAudio(req, res) {
-  if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Expose-Headers": "X-Audio-Title",
-    });
-    return res.end();
-  }
-
   if (req.method !== "GET") return sendText(res, 405, "Method not allowed");
 
   const url = getParam(req, "url");
@@ -83,12 +72,9 @@ async function youtubeAudio(req, res) {
       return sendText(res, 502, errorOutput.trim() || "yt-dlp download failed");
     }
     res.writeHead(200, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Expose-Headers": "X-Audio-Title",
       "Cache-Control": "no-store",
       "Content-Type": "audio/mpeg",
       "Content-Length": fs.statSync(file).size,
-      "Content-Disposition": "attachment; filename=\"youtube-audio.mp3\"",
       "X-Audio-Title": encodeURIComponent(title.trim().split("\n").pop() || ""),
     });
     fs.createReadStream(file).on("close", cleanup).on("error", () => res.destroy()).pipe(res);
