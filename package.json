@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
+    "test:youtube": "sh scripts/test-ytdlp-local.sh",
     "postinstall": "node scripts/download-ytdlp.js"
   },
   "dependencies": {
