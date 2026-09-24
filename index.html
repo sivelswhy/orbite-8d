@@ -56,18 +56,33 @@
       </div>
 
       <div class="group">
+        <h2>Paroles</h2>
+        <label class="check"><input type="checkbox" id="showLyrics" checked /> Afficher les paroles</label>
+        <p class="hint" id="lyricsMsg">Charge un morceau : les paroles synchronisées sont cherchées automatiquement.</p>
+        <label>Décalage <output id="lyricsOffsetOut"></output>
+          <input type="range" id="lyricsOffset" min="-5" max="5" step="0.1" value="0" title="Double-clic pour revenir à 0" />
+        </label>
+        <details class="lyrics-paste">
+          <summary>Coller des paroles synchronisées (LRC)</summary>
+          <textarea id="lyricsText" rows="6" placeholder="[00:23.21] You know the rules and so do I"></textarea>
+          <button type="button" class="secondary small" id="lyricsApply">Utiliser ces paroles</button>
+        </details>
+      </div>
+
+      <div class="group">
         <h2>Extrait</h2>
         <div class="wave" id="waveWrap">
           <canvas id="wave" aria-label="Forme d'onde du morceau en décibels, clique pour choisir le début"></canvas>
           <span class="wave-tip" id="waveTip" hidden></span>
         </div>
         <p class="hint">Tire les poignées jaunes pour choisir le début et la fin, ou glisse la sélection pour la déplacer.</p>
-        <label>Lecture <output id="posOut"></output>
+        <label>Lecture <input type="text" class="time" id="posTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
           <input type="range" id="pos" min="0" max="1" step="0.01" value="0" />
         </label>
-        <label>Début <output id="startOut"></output>
+        <label>Début <input type="text" class="time" id="startTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
           <input type="range" id="start" min="0" max="0" step="0.5" value="0" />
         </label>
+        <label>Fin <input type="text" class="time" id="endTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" /></label>
         <label>Vitesse <output id="rateOut"></output>
           <input type="range" id="rate" min="0.5" max="1.5" step="0.01" value="1" title="Double-clic pour revenir à 1×" />
         </label>
@@ -99,8 +114,8 @@
       <a id="download" class="download" hidden>Télécharger la vidéo</a>
       <div class="tiktok" id="tiktok" hidden>
         <label>Légende TikTok <input type="text" id="caption" maxlength="2200" /></label>
-        <button id="tiktokBtn" class="primary">Publier sur TikTok</button>
-        <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre ; la première fois, connecte-toi à TikTok dedans. Tu confirmes avant la publication.</p>
+        <button id="tiktokBtn" class="primary">Préparer sur TikTok</button>
+        <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre avec la vidéo et la légende ; la première fois, connecte-toi à TikTok dedans. C'est toi qui cliques sur « Publier ».</p>
       </div>
       <p class="hint">L'enregistrement se fait en temps réel : garde cet onglet au premier plan. Format : <span id="format"></span>.</p>
     </section>

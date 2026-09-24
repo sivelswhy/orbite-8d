@@ -12,9 +12,10 @@ const ui = {
   speed: $("speed"), intensity: $("intensity"), reverb: $("reverb"),
   speedOut: $("speedOut"), intensityOut: $("intensityOut"), reverbOut: $("reverbOut"),
   showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
-  start: $("start"), startOut: $("startOut"), duration: $("duration"), excerptInfo: $("excerptInfo"),
+  showLyrics: $("showLyrics"), lyricsOffset: $("lyricsOffset"), lyricsOffsetOut: $("lyricsOffsetOut"),
+  start: $("start"), startTime: $("startTime"), endTime: $("endTime"), duration: $("duration"), excerptInfo: $("excerptInfo"),
   rate: $("rate"), rateOut: $("rateOut"), keepPitch: $("keepPitch"),
-  pos: $("pos"), posOut: $("posOut"),
+  pos: $("pos"), posTime: $("posTime"),
   play: $("play"), exportBtn: $("export"), cancel: $("cancel"),
   progress: $("progress"), progressBar: $("progressBar"), progressText: $("progressText"),
   download: $("download"), format: $("format"),
@@ -218,7 +219,8 @@ function computeExcerpt() {
   excerpt = { start: sel.start, length: sel.end - sel.start };
   ui.start.max = Math.max(0, total - excerpt.length).toFixed(1);
   ui.start.value = sel.start;
-  ui.startOut.textContent = fmt(sel.start);
+  showTime(ui.startTime, sel.start);
+  showTime(ui.endTime, sel.end);
   $("customOpt").textContent = `Personnalisée (${fmt(excerpt.length)})`;
   ui.excerptInfo.textContent =
     `Extrait : ${fmt(excerpt.start)} → ${fmt(excerpt.start + excerpt.length)} sur ${fmt(total)} · ` +
@@ -247,6 +249,42 @@ function describeTrack(title, fallbackArtist = "") {
 function fileBaseName(name) {
   const base = name.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}\- ]/gu, "").trim().replace(/\s+/g, "-");
   return base.slice(0, 60) || "orbite-8d";
+}
+
+// ---------- Timecode fields (Début, Fin, Lecture) ----------
+// Typed as "1:23.4" or "83.4"; Enter applies, Escape reverts, ↑/↓ nudge by 0.1 s (Shift: 1 s).
+function fmtTime(s) {
+  s = Math.round(Math.max(0, s) * 10) / 10;
+  const m = Math.floor(s / 60);
+  return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
+}
+
+function parseTime(text) {
+  const v = text.trim().replace(",", ".");
+  if (!/^\d+(:\d+(\.\d*)?|\.\d*)?$|^\d*:\d+(\.\d*)?$/.test(v)) return NaN;
+  return v.split(":").reduce((acc, part) => acc * 60 + (+part || 0), 0);
+}
+
+// Code updates never overwrite a field the user is typing in.
+function showTime(input, s) {
+  if (document.activeElement !== input) input.value = fmtTime(s);
+}
+
+function bindTimeField(input, get, set) {
+  const apply = (t) => {
+    if (buffer && Number.isFinite(t)) set(t);
+    input.value = fmtTime(get());
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { apply(parseTime(input.value)); input.select(); }
+    else if (e.key === "Escape") { input.value = fmtTime(get()); input.blur(); }
+    else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      apply(get() + (e.shiftKey ? 1 : 0.1) * (e.key === "ArrowUp" ? 1 : -1));
+    }
+  });
+  input.addEventListener("focus", () => input.select());
+  input.addEventListener("blur", () => apply(parseTime(input.value)));
 }
 
 function fmt(s) {
@@ -289,6 +327,8 @@ function setBuffer(buf, name) {
   player.src = playerUrl;
   sel = { start: 0, end: 0 };
   cursor = null;
+  setLyrics([], "");
+  $("lyricsText").value = "";
   updateDurationOptions();
   ui.fileName.textContent = name;
   levels = computeLevels(buf);
@@ -407,16 +447,20 @@ function syncCursor() {
   ui.pos.min = excerpt.start.toFixed(2);
   ui.pos.max = end.toFixed(2);
   if (!posDragging) ui.pos.value = t;
-  ui.posOut.textContent = `${fmt(Math.max(0, t - excerpt.start))} / ${fmt(excerpt.length)}`;
+  showTime(ui.posTime, t);
+}
+
+function seekTo(t) {
+  t = Math.min(Math.max(t, excerpt.start), excerpt.start + excerpt.length - 0.05);
+  if (playing && ctx.currentTime >= playStartCtx) player.currentTime = t;
+  else cursor = t;
+  syncCursor();
+  drawWave();
 }
 
 ui.pos.addEventListener("input", () => {
   posDragging = true;
-  const t = +ui.pos.value;
-  if (playing && ctx.currentTime >= playStartCtx) player.currentTime = t;
-  else cursor = t;
-  ui.posOut.textContent = `${fmt(t - excerpt.start)} / ${fmt(excerpt.length)}`;
-  drawWave();
+  seekTo(+ui.pos.value);
 });
 ui.pos.addEventListener("change", () => { posDragging = false; });
 
@@ -637,8 +681,10 @@ function restartScenes() {
 
 function drawVideo(v, bass, alpha) {
   if (v.readyState < 2) return;
-  const zoom = 1.02 + bass * 0.04;
+  // Videos are exactly 1080×1920: at rest they are drawn 1:1 (sharpest); only the bass pump zooms.
+  const zoom = 1 + bass * 0.03;
   const w = W * zoom, h = H * zoom;
+  g.imageSmoothingQuality = "high";
   g.globalAlpha = alpha;
   g.drawImage(v, (W - w) / 2, (H - h) / 2, w, h);
   g.globalAlpha = 1;
@@ -761,8 +807,123 @@ function drawIntro(elapsed, length) {
   g.restore();
 }
 
+// ---------- Lyrics ----------
+// Synced lyrics (LRC) from lrclib.net, shown one line at a time in the middle
+// of the video with a fade in/out. Times are track times, so the excerpt and
+// the speed are followed automatically.
+const LYRIC_FADE_IN = 0.3;
+const LYRIC_FADE_OUT = 0.35;
+const LYRIC_MAX_HOLD = 8; // a line fades out after this, even if the next one is far
+let lyrics = []; // [{ t, text }] sorted by time
+let lyricsRequest = 0;
+
+function lyricsMessage(text) {
+  $("lyricsMsg").textContent = text;
+}
+
+function setLyrics(lines, message) {
+  lyrics = lines;
+  if (message) lyricsMessage(message);
+}
+
+// "[01:23.45] text" lines → [{ t, text }]; several stamps per line are allowed.
+function parseLrc(lrc) {
+  const out = [];
+  for (const line of lrc.split(/\r?\n/)) {
+    const stamps = [...line.matchAll(/\[(\d+):(\d+(?:[.:]\d+)?)\]/g)];
+    if (!stamps.length) continue;
+    const text = line.replace(/\[[^\]]*\]/g, "").trim();
+    for (const m of stamps) out.push({ t: +m[1] * 60 + parseFloat(m[2].replace(":", ".")), text });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+async function findLyrics() {
+  const id = ++lyricsRequest;
+  const { song, artist } = trackInfo;
+  if (!song) return setLyrics([], "Pas de titre de morceau : colle des paroles LRC ci-dessous.");
+  lyricsMessage(`Recherche des paroles de « ${song} »…`);
+  try {
+    const params = new URLSearchParams(artist ? { track_name: song, artist_name: artist } : { q: song });
+    const res = await fetch(`https://lrclib.net/api/search?${params}`);
+    const results = (await res.json()).filter((r) => r.syncedLyrics && parseLrc(r.syncedLyrics).length > 3);
+    if (id !== lyricsRequest) return; // another track was loaded meanwhile
+    if (!results.length) return setLyrics([], `Aucune parole synchronisée trouvée pour « ${song} ». Tu peux en coller ci-dessous.`);
+    // Closest duration to the loaded track = most likely the same version.
+    const best = results.sort((a, b) => Math.abs(a.duration - buffer.duration) - Math.abs(b.duration - buffer.duration))[0];
+    const lines = parseLrc(best.syncedLyrics);
+    setLyrics(lines, `Paroles : ${best.trackName} – ${best.artistName} (${lines.length} lignes). Si elles sont décalées, ajuste le décalage.`);
+    $("lyricsText").value = best.syncedLyrics;
+  } catch (_) {
+    if (id === lyricsRequest) setLyrics([], "Impossible de joindre lrclib.net. Tu peux coller des paroles ci-dessous.");
+  }
+}
+
+function syncLyricsOffset() {
+  const v = +ui.lyricsOffset.value;
+  ui.lyricsOffsetOut.textContent = `${v > 0 ? "+" : ""}${v.toFixed(1)} s`;
+}
+ui.lyricsOffset.addEventListener("input", syncLyricsOffset);
+ui.lyricsOffset.addEventListener("dblclick", () => { ui.lyricsOffset.value = 0; syncLyricsOffset(); });
+syncLyricsOffset();
+
+$("lyricsApply").addEventListener("click", () => {
+  const lines = parseLrc($("lyricsText").value);
+  setLyrics(lines, lines.length
+    ? `Paroles collées (${lines.length} lignes).`
+    : "Aucune ligne reconnue : il faut le format « [mm:ss.xx] texte ».");
+});
+
+// Splits text into lines that fit maxW with the current font.
+function wrapText(text, maxW) {
+  const lines = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    const test = line ? `${line} ${word}` : word;
+    if (line && g.measureText(test).width > maxW) { lines.push(line); line = word; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawLyrics() {
+  if (!ui.showLyrics.checked || !lyrics.length || !playing || ctx.currentTime < playStartCtx) return;
+  const now = playPosition() + +ui.lyricsOffset.value;
+  let i = -1;
+  while (i + 1 < lyrics.length && lyrics[i + 1].t <= now) i++;
+  if (i < 0 || !lyrics[i].text) return;
+  const { t, text } = lyrics[i];
+  const end = Math.min(lyrics[i + 1] ? lyrics[i + 1].t : t + LYRIC_MAX_HOLD, t + LYRIC_MAX_HOLD);
+  const since = now - t;
+  const alpha = Math.max(0, Math.min(1, since / LYRIC_FADE_IN, (end - now) / LYRIC_FADE_OUT));
+  if (!alpha) return;
+
+  let size = 50;
+  g.font = `600 ${size}px Outfit, system-ui, sans-serif`;
+  let lines = wrapText(text, W - 280);
+  if (lines.length > 2) {
+    size = 42;
+    g.font = `600 ${size}px Outfit, system-ui, sans-serif`;
+    lines = wrapText(text, W - 240);
+  }
+  const lead = size * 1.25;
+  const rise = (1 - Math.min(1, since / LYRIC_FADE_IN)) * 14; // slides up while fading in
+  const y0 = H / 2 - ((lines.length - 1) * lead) / 2 + rise;
+  g.save();
+  g.globalAlpha = alpha * 0.92;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.shadowColor = "rgba(0,0,0,0.6)";
+  g.shadowBlur = 18;
+  g.fillStyle = "#fff";
+  lines.forEach((l, k) => g.fillText(l, W / 2, y0 + k * lead));
+  g.restore();
+}
+
 function drawOverlay(bass) {
   if (ui.showLogo.checked) drawLogo(W - 100, 100);
+  drawLyrics();
   g.textAlign = "center";
   g.textBaseline = "middle";
 
@@ -879,7 +1040,7 @@ async function startExport() {
     ...recDest.stream.getAudioTracks(),
   ]);
   const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 20_000_000, audioBitsPerSecond: 256_000 });
   recording = { rec, cancelled: false };
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   rec.onstop = () => {
@@ -943,6 +1104,28 @@ function syncOutputs() {
 [ui.speed, ui.intensity, ui.reverb].forEach((el) => el.addEventListener("input", syncOutputs));
 ui.showIntro.addEventListener("change", computeExcerpt);
 
+// Début: with a preset duration the excerpt moves (same length); with a custom
+// one only its start changes. Fin always trims (custom duration).
+bindTimeField(ui.startTime, () => sel.start, (t) => {
+  if (ui.duration.value === "custom" || ui.duration.value === "full") {
+    sel.start = Math.max(0, Math.min(t, sel.end - minExcerpt()));
+    ui.duration.value = "custom";
+  } else {
+    const len = sel.end - sel.start;
+    sel.start = Math.max(0, Math.min(t, buffer.duration - len));
+    sel.end = sel.start + len;
+  }
+  computeExcerpt();
+  relaunchIfPlaying();
+});
+bindTimeField(ui.endTime, () => sel.end, (t) => {
+  sel.end = Math.min(buffer.duration, Math.max(t, sel.start + minExcerpt()));
+  ui.duration.value = "custom";
+  computeExcerpt();
+  relaunchIfPlaying();
+});
+bindTimeField(ui.posTime, () => +ui.pos.value, seekTo);
+
 // The slider moves the whole selection, keeping its length.
 ui.start.addEventListener("input", () => {
   const len = sel.end - sel.start;
@@ -991,6 +1174,7 @@ async function loadFile(file) {
     setBuffer(buf, file.name);
     trackName = fileBaseName(file.name);
     trackInfo = describeTrack(file.name.replace(/\.[^.]+$/, ""));
+    findLyrics();
   } catch (e) {
     ui.fileName.textContent = "Fichier illisible. Essaie un mp3, m4a ou wav.";
   }
@@ -999,7 +1183,7 @@ ui.file.addEventListener("change", () => loadFile(ui.file.files[0]));
 
 // ---------- Publication TikTok ----------
 // The local server drives a Chromium window (api/tiktok.js); this page sends the
-// exported video, follows the progress and asks for confirmation before posting.
+// exported video and follows the progress. Posting is left to the user, in TikTok.
 let lastExport = null;
 const captionInput = $("caption");
 
@@ -1028,16 +1212,19 @@ async function tiktokPost(action, body, type) {
 }
 
 // Polls the server until the job reaches one of the given states.
+let tiktokPoll = 0;
 async function waitTikTok(states) {
+  const id = ++tiktokPoll;
   for (;;) {
     const job = await (await fetch("/api/tiktok/status")).json();
+    if (id !== tiktokPoll) return job; // a newer wait took over
     tiktokMessage(job.message, job.state === "error");
     if (states.includes(job.state)) return job;
     await new Promise((r) => setTimeout(r, 1000));
   }
 }
 
-async function publishToTikTok() {
+async function prepareOnTikTok() {
   if (!lastExport) return;
   const btn = $("tiktokBtn");
   btn.disabled = true;
@@ -1046,22 +1233,16 @@ async function publishToTikTok() {
     const caption = captionInput.value.trim();
     await tiktokPost(`prepare?caption=${encodeURIComponent(caption)}`, lastExport, lastExport.type);
     const job = await waitTikTok(["ready", "error"]);
-    if (job.state === "error") return;
-    const ok = confirm(`La vidéo est prête dans TikTok (regarde la fenêtre Chromium).\n\nLégende : ${caption}\n\nPublier maintenant ?`);
-    if (!ok) {
-      await tiktokPost("cancel");
-      tiktokMessage("Publication annulée : la vidéo n'a pas été publiée.");
-      return;
-    }
-    await tiktokPost("publish");
-    await waitTikTok(["published", "check", "error"]);
+    btn.disabled = false;
+    // Keep following: the window closes itself once the user has posted.
+    if (job.state === "ready") waitTikTok(["published", "check", "error", "idle"]).catch(() => {});
   } catch (e) {
-    tiktokMessage(e.message || "Erreur pendant la publication.", true);
+    tiktokMessage(e.message || "Erreur pendant la préparation sur TikTok.", true);
   } finally {
     btn.disabled = false;
   }
 }
-$("tiktokBtn").addEventListener("click", publishToTikTok);
+$("tiktokBtn").addEventListener("click", prepareOnTikTok);
 
 // ---------- Import par lien ----------
 const URL_HINT = "Lien direct audio, Dropbox ou YouTube. YouTube est converti en MP3 par le serveur local.";
@@ -1120,6 +1301,7 @@ async function loadUrl(raw) {
     trackInfo = isYouTube
       ? describeTrack(name, decodeURIComponent(res.headers.get("x-audio-artist") || ""))
       : describeTrack(name.replace(/\.[^.]+$/, ""));
+    findLyrics();
     urlMessage(URL_HINT);
   } catch (e) {
     urlMessage(e instanceof TypeError

@@ -1,8 +1,9 @@
 "use strict";
 
-// Publishes an exported video on TikTok by driving a visible Chromium window.
+// Prepares an exported video on TikTok by driving a visible Chromium window:
+// upload + caption, then it stops. The user reviews it and clicks "Post" in
+// TikTok; once TikTok has left the upload page, the window is closed.
 // The user logs in once in that window; the session is kept in PROFILE_DIR.
-// Flow: POST /prepare (upload + caption) → user confirms in Orbite → POST /publish.
 
 const fs = require("fs");
 const os = require("os");
@@ -18,16 +19,16 @@ const SELECTORS = {
   fileInput: 'input[type="file"][accept*="video"]',
   caption: '.public-DraftEditor-content, div[contenteditable="true"]',
   postButton: 'button[data-e2e="post_video_button"]',
-  // Optional second dialog after "Post" (content check, "post anyway"…).
-  postNow: 'div[role="dialog"] button:has-text("Post now"), div[role="dialog"] button:has-text("Publier maintenant")',
 };
 
-const BUSY = new Set(["opening", "login", "uploading", "publishing"]);
+const BUSY = new Set(["opening", "login", "uploading", "posting"]);
+const POST_TIMEOUT = 5 * 60_000; // after the click, time for TikTok (and any "post now" dialog)
 
 let context = null;
 let page = null;
 let videoFile = null;
 let job = { state: "idle", message: "" };
+let resolvePostClick = null; // pending wait for the user's click on "Post"
 
 function setJob(state, message) {
   job = { state, message };
@@ -37,9 +38,18 @@ async function getPage() {
   if (!context) {
     const { chromium } = require("playwright");
     context = await chromium.launchPersistentContext(PROFILE_DIR, { headless: false, viewport: null });
-    context.on("close", () => { context = null; page = null; });
+    context.on("close", () => {
+      context = null;
+      page = null;
+      if (resolvePostClick) resolvePostClick(false);
+      if (job.state !== "published") setJob("idle", "Fenêtre TikTok fermée.");
+    });
   }
-  if (!page || page.isClosed()) page = context.pages()[0] || (await context.newPage());
+  if (!page || page.isClosed()) {
+    page = context.pages()[0] || (await context.newPage());
+    // Called from the page when the user clicks "Post" (survives the navigation that follows).
+    await page.exposeFunction("orbitePostClicked", () => resolvePostClick && resolvePostClick(true));
+  }
   return page;
 }
 
@@ -104,27 +114,35 @@ async function prepare(file, caption) {
     await fillCaption(p, caption);
     setJob("uploading", "TikTok traite la vidéo…");
     await waitPostEnabled(p);
-    setJob("ready", "La vidéo est prête dans TikTok.");
+    await p.bringToFront();
+    setJob("ready", "La vidéo et la légende sont prêtes dans la fenêtre TikTok : vérifie, puis clique toi-même sur « Publier ».");
+    closeAfterPost(p);
   } catch (error) {
     await fail(error);
   }
 }
 
-async function publish() {
-  try {
-    setJob("publishing", "Publication…");
-    const p = await getPage();
-    await p.locator(SELECTORS.postButton).first().click();
-    const postNow = p.locator(SELECTORS.postNow).first();
-    if (await postNow.waitFor({ timeout: 5000 }).then(() => true, () => false)) await postNow.click();
-    const left = await p.waitForURL((u) => !u.pathname.includes("/upload"), { timeout: 60_000 }).then(() => true, () => false);
-    setJob(left ? "published" : "check", left
-      ? "Vidéo publiée sur TikTok."
-      : "Le clic sur « Publier » est fait, mais je n'ai pas vu la confirmation : vérifie dans la fenêtre TikTok.");
-    removeVideoFile();
-  } catch (error) {
-    await fail(error);
+// Waits for the user's own click on "Post", then for TikTok to leave the upload
+// page (= posted), and closes the window. Nothing here clicks "Post".
+async function closeAfterPost(p) {
+  const clicked = await new Promise((resolve) => {
+    resolvePostClick = resolve;
+    p.evaluate((sel) => {
+      document.querySelector(sel).addEventListener("click", () => window.orbitePostClicked(), { once: true });
+    }, SELECTORS.postButton).catch(() => resolve(false));
+  });
+  resolvePostClick = null;
+  if (!clicked) return;
+  setJob("posting", "Publication en cours sur TikTok…");
+  const posted = await p.waitForURL((u) => !u.pathname.includes("/upload"), { timeout: POST_TIMEOUT }).then(() => true, () => false);
+  if (!posted) {
+    setJob("check", "Je n'ai pas vu TikTok confirmer la publication : la fenêtre reste ouverte, vérifie.");
+    return;
   }
+  setJob("published", "Vidéo publiée : fenêtre TikTok fermée.");
+  removeVideoFile();
+  await p.waitForTimeout(1500);
+  if (context) await context.close().catch(() => {});
 }
 
 function removeVideoFile() {
@@ -137,7 +155,8 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-// Routes: GET /api/tiktok/status, POST /api/tiktok/{prepare,publish,cancel}.
+// Routes: GET /api/tiktok/status, POST /api/tiktok/prepare. Nothing here posts:
+// publishing is always the user's own click in TikTok.
 // POSTs require the X-Orbite header, so other websites cannot trigger them
 // (a custom header forces a CORS preflight, which this server never approves).
 function tiktok(req, res) {
@@ -161,18 +180,6 @@ function tiktok(req, res) {
     });
     out.on("error", (error) => sendJson(res, 500, { message: error.message }));
     return;
-  }
-
-  if (action === "publish") {
-    if (job.state !== "ready") return sendJson(res, 409, { message: "Aucune vidéo prête à publier." });
-    publish();
-    return sendJson(res, 202, job);
-  }
-
-  if (action === "cancel") {
-    removeVideoFile();
-    setJob("idle", "Publication annulée.");
-    return sendJson(res, 200, job);
   }
 
   return sendJson(res, 404, { message: "Not found" });
