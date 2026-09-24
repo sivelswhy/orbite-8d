@@ -2,10 +2,7 @@
   "version": 2,
   "functions": {
     "api/**/*.js": {
-      "includeFiles": [
-        "node_modules/youtube-dl-exec/bin/**",
-        "node_modules/ffmpeg-static/ffmpeg"
-      ],
+      "includeFiles": "node_modules/youtube-dl-exec/bin/**",
       "maxDuration": 60
     }
   }
