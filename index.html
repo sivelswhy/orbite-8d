@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orbite 8D</title>
+  <meta name="description" content="Transforme un morceau en vidéo TikTok 8D prête à publier." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Orbite <span>8D</span></h1>
+    <p>Ton morceau tourne autour de la tête, sur un paysage animé. Export 1080×1920 prêt pour TikTok.</p>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <div class="group">
+        <h2>Son</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,.mp3,.m4a,.wav" hidden />
+          <strong>Dépose un mp3, m4a ou wav</strong>
+          <small id="fileName">Son démo chargé</small>
+        </label>
+        <p class="hint">Tout est traité dans ton navigateur, rien n'est envoyé.</p>
+      </div>
+
+      <div class="group">
+        <h2>Effet 8D</h2>
+        <label>Vitesse de rotation <output id="speedOut"></output>
+          <input type="range" id="speed" min="2" max="20" step="0.5" value="8" />
+        </label>
+        <label>Intensité <output id="intensityOut"></output>
+          <input type="range" id="intensity" min="0" max="1" step="0.01" value="0.9" />
+        </label>
+        <label>Réverbération <output id="reverbOut"></output>
+          <input type="range" id="reverb" min="0" max="1" step="0.01" value="0.3" />
+        </label>
+      </div>
+
+      <div class="group">
+        <h2>Paysage</h2>
+        <div class="chips" id="scenes"></div>
+      </div>
+
+      <div class="group">
+        <h2>Texte</h2>
+        <label>Titre <input type="text" id="title" maxlength="60" /></label>
+        <label>Artiste <input type="text" id="artist" maxlength="60" /></label>
+        <label class="check"><input type="checkbox" id="showHead" checked /> Schéma de la tête</label>
+      </div>
+
+      <div class="group">
+        <h2>Extrait</h2>
+        <label>Début <output id="startOut"></output>
+          <input type="range" id="start" min="0" max="0" step="0.5" value="0" />
+        </label>
+        <label>Durée
+          <select id="duration">
+            <option value="15">15 s</option>
+            <option value="30" selected>30 s</option>
+            <option value="60">1 min</option>
+            <option value="90">1 min 30</option>
+            <option value="120">2 min</option>
+            <option value="180">3 min</option>
+            <option value="full">Morceau entier</option>
+          </select>
+        </label>
+        <p class="hint" id="excerptInfo"></p>
+      </div>
+
+      <div class="actions">
+        <button id="play" class="secondary">▶ Écouter</button>
+        <button id="export" class="primary">Exporter la vidéo</button>
+      </div>
+      <div class="progress" id="progress" hidden>
+        <div class="bar"><div id="progressBar"></div></div>
+        <p id="progressText"></p>
+        <button id="cancel" class="secondary small">Annuler</button>
+      </div>
+      <a id="download" class="download" hidden>Télécharger la vidéo</a>
+      <p class="hint">L'enregistrement se fait en temps réel : garde cet onglet au premier plan. Format : <span id="format"></span>.</p>
+    </section>
+
+    <section class="stage">
+      <canvas id="canvas" width="1080" height="1920"></canvas>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
