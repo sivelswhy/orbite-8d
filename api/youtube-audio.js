@@ -1,8 +1,8 @@
 "use strict";
 
-const ffmpegPath = require("ffmpeg-static");
-const path = require("path");
-const { spawn } = require("child_process");
+const { Readable } = require("stream");
+
+const VIDKRAKEN_API = "https://vidkraken.com/api/v2/download";
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "youtu.be", "youtube-nocookie.com"]);
 
@@ -22,7 +22,42 @@ function getUrl(req) {
   return parsed.searchParams.get("url");
 }
 
-module.exports = function youtubeAudio(req, res) {
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function createVidKrakenDownload(url, apiKey) {
+  const createResponse = await fetch(VIDKRAKEN_API, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ url, format: "mp3" }),
+  });
+  const createData = await createResponse.json().catch(() => ({}));
+  if (!createResponse.ok || !createData.jobId) {
+    throw new Error(createData.error || createData.message || `VidKraken HTTP ${createResponse.status}`);
+  }
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await wait(1000);
+    const statusResponse = await fetch(`${VIDKRAKEN_API}/${encodeURIComponent(createData.jobId)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const statusData = await statusResponse.json().catch(() => ({}));
+    if (!statusResponse.ok) {
+      throw new Error(statusData.error || statusData.message || `VidKraken HTTP ${statusResponse.status}`);
+    }
+    if (statusData.status === "COMPLETED" && statusData.downloadUrl) return statusData.downloadUrl;
+    if (["FAILED", "ERROR", "CANCELLED"].includes(statusData.status)) {
+      throw new Error(statusData.error || statusData.message || "VidKraken download failed");
+    }
+  }
+  throw new Error("VidKraken download timed out");
+}
+
+module.exports = async function youtubeAudio(req, res) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
@@ -42,44 +77,25 @@ module.exports = function youtubeAudio(req, res) {
     return res.end("A valid HTTPS YouTube URL is required");
   }
 
-  const ytdlpPath = path.join(__dirname, "../bin/yt-dlp");
-  const args = [
-    "--no-playlist", "--no-warnings", "--format", "bestaudio/best",
-    "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
-    "--extractor-args", "youtube:player_client=android",
-    "--ffmpeg-location", ffmpegPath, "--output", "-", url,
-  ];
-  const process = spawn(ytdlpPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-  const output = [];
-  let errorOutput = "";
-  let responded = false;
-
-  process.stdout.on("data", (chunk) => output.push(chunk));
-  process.stderr.on("data", (chunk) => { errorOutput += chunk.toString(); });
-  process.on("error", (error) => {
-    if (responded) return;
-    responded = true;
-    const message = error.code === "ENOENT"
-      ? "yt-dlp binary is not available"
-      : "Unable to start audio conversion";
+  const apiKey = process.env.VIDKRAKEN_API_KEY;
+  if (!apiKey) {
     res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end(message);
-  });
-  process.on("close", (code) => {
-    if (responded) return;
-    if (code === 0) {
-      responded = true;
-      res.writeHead(200, {
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-store",
-        "Content-Type": "audio/mpeg",
-        "Content-Disposition": "attachment; filename=\"youtube-audio.mp3\"",
-      });
-      return res.end(Buffer.concat(output));
-    }
-    responded = true;
+    return res.end("VIDKRAKEN_API_KEY is not configured");
+  }
+
+  try {
+    const downloadUrl = await createVidKrakenDownload(url, apiKey);
+    const audioResponse = await fetch(downloadUrl);
+    if (!audioResponse.ok || !audioResponse.body) throw new Error("VidKraken file unavailable");
+    res.writeHead(200, {
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-store",
+      "Content-Type": "audio/mpeg",
+      "Content-Disposition": "attachment; filename=\"youtube-audio.mp3\"",
+    });
+    return Readable.fromWeb(audioResponse.body).pipe(res);
+  } catch (error) {
     res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end(errorOutput.trim() || "Unable to download this YouTube audio");
-  });
-  req.on("close", () => { if (!process.killed) process.kill(); });
+    return res.end(error.message || "VidKraken download failed");
+  }
 };
