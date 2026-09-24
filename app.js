@@ -8,7 +8,7 @@ const W = canvas.width;
 const H = canvas.height;
 
 const ui = {
-  file: $("file"), drop: $("drop"), fileName: $("fileName"),
+  file: $("file"), drop: $("drop"), fileName: $("fileName"), url: $("url"),
   speed: $("speed"), intensity: $("intensity"), reverb: $("reverb"),
   speedOut: $("speedOut"), intensityOut: $("intensityOut"), reverbOut: $("reverbOut"),
   scenes: $("scenes"), title: $("title"), artist: $("artist"), showHead: $("showHead"),
@@ -603,6 +603,8 @@ function setBusy(busy) {
   ui.exportBtn.disabled = busy;
   ui.play.disabled = busy;
   ui.file.disabled = busy;
+  ui.url.disabled = busy;
+  $("urlBtn").disabled = busy;
   ui.start.disabled = busy || ui.duration.value === "full";
   ui.duration.disabled = busy;
   if (!busy) ui.progressBar.style.width = "0";
@@ -662,6 +664,70 @@ async function loadFile(file) {
   }
 }
 ui.file.addEventListener("change", () => loadFile(ui.file.files[0]));
+
+// ---------- Import par lien ----------
+const URL_HINT = "Lien direct vers un fichier audio, ou lien de partage Dropbox.";
+
+function urlMessage(text, isError) {
+  const el = $("urlMsg");
+  el.textContent = text;
+  el.classList.toggle("error", !!isError);
+}
+
+// Rewrites share links into URLs that serve the raw file with CORS headers.
+function normalizeAudioUrl(raw) {
+  const u = new URL(raw.trim());
+  if (!/^https?:$/.test(u.protocol)) throw new Error("protocol");
+  const host = u.hostname.replace(/^www\./, "");
+  if (/(^|\.)youtube\.com$|^youtu\.be$|(^|\.)youtube-nocookie\.com$/.test(host)) throw new Error("youtube");
+  if (host === "dropbox.com") {
+    u.hostname = "dl.dropboxusercontent.com";
+    u.searchParams.delete("dl");
+  }
+  const drive = host === "drive.google.com" && u.pathname.match(/\/file\/d\/([^/]+)/);
+  if (drive) return `https://drive.usercontent.google.com/download?id=${drive[1]}&export=download`;
+  return u.toString();
+}
+
+async function loadUrl(raw) {
+  let url;
+  try {
+    url = normalizeAudioUrl(raw);
+  } catch (e) {
+    urlMessage(e.message === "youtube"
+      ? "Les liens YouTube ne sont pas pris en charge. Utilise un lien vers un fichier audio."
+      : "Lien invalide.", true);
+    return;
+  }
+  const btn = $("urlBtn");
+  btn.disabled = true;
+  urlMessage("Téléchargement…");
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const type = res.headers.get("content-type") || "";
+    if (type.startsWith("text/html")) throw new Error("html");
+    const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+    const name = decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
+    setBuffer(buf, name);
+    ui.title.value = name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").slice(0, 60);
+    ui.artist.value = "";
+    urlMessage(URL_HINT);
+  } catch (e) {
+    urlMessage(e instanceof TypeError
+      ? "Le site qui héberge ce fichier bloque son chargement depuis une autre page. Essaie un lien Dropbox ou un autre hébergeur."
+      : e.message === "html"
+        ? "Ce lien mène à une page web, pas à un fichier audio."
+        : "Impossible de lire ce fichier audio.", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("urlForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (ui.url.value.trim()) loadUrl(ui.url.value);
+});
 ["dragenter", "dragover"].forEach((ev) => ui.drop.addEventListener(ev, (e) => { e.preventDefault(); ui.drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach((ev) => ui.drop.addEventListener(ev, (e) => { e.preventDefault(); ui.drop.classList.remove("over"); }));
 ui.drop.addEventListener("drop", (e) => loadFile(e.dataTransfer.files[0]));

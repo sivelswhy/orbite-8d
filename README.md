@@ -17,7 +17,7 @@ Importer le dossier dans Vercel (preset « Other », pas de commande de build), 
 
 ## Fonctionnement
 
-- **Son** : mp3 / m4a / wav décodé dans le navigateur (Web Audio). Un son démo est synthétisé au démarrage.
+- **Son** : mp3 / m4a / wav décodé dans le navigateur (Web Audio), depuis un fichier ou un lien direct (liens Dropbox convertis automatiquement ; l’hébergeur doit autoriser CORS). Un son démo est synthétisé au démarrage.
 - **8D** : `PannerNode` HRTF en orbite ; basses (< 120 Hz) gardées au centre ; vitesse, intensité, réverbération (convolution) réglables.
 - **Paysages** : Nuit boréale, Horizon néon, Sommets à l'aube, Mer de lune, Dunes — réactifs aux basses.
 - **Texte** : badge « 8D AUDIO », titre, artiste, schéma de la position du son.
