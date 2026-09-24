@@ -11,8 +11,9 @@ const ui = {
   file: $("file"), drop: $("drop"), fileName: $("fileName"), url: $("url"),
   speed: $("speed"), intensity: $("intensity"), reverb: $("reverb"),
   speedOut: $("speedOut"), intensityOut: $("intensityOut"), reverbOut: $("reverbOut"),
-  scenes: $("scenes"), title: $("title"), artist: $("artist"), showHead: $("showHead"),
+  scenes: $("scenes"), title: $("title"), artist: $("artist"), showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
   start: $("start"), startOut: $("startOut"), duration: $("duration"), excerptInfo: $("excerptInfo"),
+  rate: $("rate"), rateOut: $("rateOut"),
   play: $("play"), exportBtn: $("export"), cancel: $("cancel"),
   progress: $("progress"), progressBar: $("progressBar"), progressText: $("progressText"),
   download: $("download"), format: $("format"),
@@ -75,8 +76,11 @@ let buffer = null;
 let source = null;
 let playing = false;
 let angle = 0;
-let playStartCtx = 0; // ctx time when the current excerpt started
+let playStartCtx = 0; // ctx time when the current excerpt started (adjusted on speed changes)
+let introLength = 0; // seconds of intro card shown before the music, for the current playback
+const INTRO_SECONDS = 1.5;
 let excerpt = { start: 0, length: 30 };
+let sel = { start: 0, end: 30 }; // chosen range in seconds; excerpt is derived from it
 
 function stopSource() {
   if (source) {
@@ -87,36 +91,55 @@ function stopSource() {
   }
   playing = false;
   ui.play.textContent = "▶ Écouter";
+  drawWave();
 }
 
 function startSource(onEnd) {
   stopSource();
   computeExcerpt();
-  source = new AudioBufferSourceNode(ctx, { buffer });
+  source = new AudioBufferSourceNode(ctx, { buffer, playbackRate: rate() });
   source.connect(lowpass);
   source.connect(highpass);
   source.connect(analyser);
   angle = 0;
-  playStartCtx = ctx.currentTime + 0.05;
+  introLength = ui.showIntro.checked ? INTRO_SECONDS : 0;
+  playStartCtx = ctx.currentTime + 0.05 + introLength;
   source.start(playStartCtx, excerpt.start, excerpt.length);
   source.onended = () => { stopSource(); onEnd && onEnd(); };
   playing = true;
   ui.play.textContent = "■ Stop";
+  requestAnimationFrame(waveLoop);
+}
+
+// Playback speed of the excerpt (changes pitch too, like "slowed" / "sped up" edits).
+function rate() {
+  return +ui.rate.value;
+}
+
+// Position in the track (seconds) of what is playing now.
+function playPosition() {
+  return excerpt.start + Math.max(0, ctx.currentTime - playStartCtx) * rate();
+}
+
+function minExcerpt() {
+  return Math.min(1, buffer.duration);
 }
 
 function computeExcerpt() {
   if (!buffer) return;
   const total = buffer.duration;
-  if (ui.duration.value === "full") {
-    excerpt = { start: 0, length: total };
-  } else {
-    const len = Math.min(+ui.duration.value, total);
-    const start = Math.min(+ui.start.value, Math.max(0, total - len));
-    excerpt = { start, length: len };
-  }
-  ui.start.disabled = ui.duration.value === "full";
+  sel.end = Math.min(Math.max(sel.end, minExcerpt()), total);
+  sel.start = Math.max(0, Math.min(sel.start, sel.end - minExcerpt()));
+  excerpt = { start: sel.start, length: sel.end - sel.start };
+  ui.start.max = Math.max(0, total - excerpt.length).toFixed(1);
+  ui.start.value = sel.start;
+  ui.startOut.textContent = fmt(sel.start);
+  $("customOpt").textContent = `Personnalisée (${fmt(excerpt.length)})`;
   ui.excerptInfo.textContent =
-    `Extrait : ${fmt(excerpt.start)} → ${fmt(excerpt.start + excerpt.length)} (${fmt(excerpt.length)}) sur ${fmt(total)}`;
+    `Extrait : ${fmt(excerpt.start)} → ${fmt(excerpt.start + excerpt.length)} sur ${fmt(total)} · ` +
+    `vidéo de ${fmt(excerpt.length / rate())}${rate() === 1 ? "" : ` à ${rate().toFixed(2)}×`}` +
+    (ui.showIntro.checked ? ` + ${String(INTRO_SECONDS).replace(".", ",")} s d'intro` : "");
+  drawWave();
 }
 
 function fmt(s) {
@@ -124,15 +147,212 @@ function fmt(s) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+// Applies the "Durée" preset to the selection, keeping its start when possible.
+function applyPreset() {
+  if (!buffer || ui.duration.value === "custom") return computeExcerpt();
+  const total = buffer.duration;
+  if (ui.duration.value === "full") {
+    sel = { start: 0, end: total };
+  } else {
+    const len = Math.min(+ui.duration.value, total);
+    const start = Math.min(sel.start, total - len);
+    sel = { start, end: start + len };
+  }
+  computeExcerpt();
+}
+
+// Disables the durations longer than the track; falls back to the longest one left.
+function updateDurationOptions() {
+  const options = [...ui.duration.options];
+  for (const o of options) {
+    if (!isNaN(+o.value)) o.disabled = +o.value > buffer.duration + 0.5;
+  }
+  const current = ui.duration.selectedOptions[0];
+  if (ui.duration.value === "custom" || current.disabled) {
+    const fits = options.filter((o) => !isNaN(+o.value) && !o.disabled);
+    ui.duration.value = fits.length ? fits.pop().value : "full";
+  }
+}
+
 function setBuffer(buf, name) {
   stopSource();
   buffer = buf;
-  ui.start.max = Math.max(0, buf.duration - 1).toFixed(1);
-  ui.start.value = 0;
-  ui.startOut.textContent = fmt(0);
+  sel = { start: 0, end: 0 };
+  updateDurationOptions();
   ui.fileName.textContent = name;
+  levels = computeLevels(buf);
+  applyPreset();
+}
+
+// ---------- Waveform (dB) ----------
+// One RMS level per bucket, in dB, drawn as mirrored bars. The excerpt is
+// highlighted; clicking or dragging sets its start.
+const wave = $("wave");
+const waveWrap = $("waveWrap");
+const waveTip = $("waveTip");
+const waveG = wave.getContext("2d");
+const WAVE_BUCKETS = 800;
+const DB_FLOOR = -60;
+const HANDLE_W = 12; // CSS px
+const HANDLE_COLOR = "#ffd23f";
+let levels = null;
+
+function computeLevels(buf) {
+  const channels = [];
+  for (let c = 0; c < buf.numberOfChannels; c++) channels.push(buf.getChannelData(c));
+  const size = Math.max(1, Math.floor(buf.length / WAVE_BUCKETS));
+  const out = new Float32Array(WAVE_BUCKETS);
+  for (let b = 0; b < WAVE_BUCKETS; b++) {
+    let sum = 0;
+    const from = b * size;
+    const to = Math.min(buf.length, from + size);
+    for (let i = from; i < to; i++) {
+      let v = 0;
+      for (const ch of channels) v += ch[i];
+      v /= channels.length;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / Math.max(1, to - from));
+    out[b] = Math.max(DB_FLOOR, 20 * Math.log10(rms || 1e-9));
+  }
+  return out;
+}
+
+function drawWave() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(wave.clientWidth * dpr);
+  const h = Math.round(wave.clientHeight * dpr);
+  if (!w || !h) return;
+  if (wave.width !== w || wave.height !== h) { wave.width = w; wave.height = h; }
+  waveG.clearRect(0, 0, w, h);
+  if (!levels || !buffer) return;
+
+  const total = buffer.duration;
+  const x0 = (excerpt.start / total) * w;
+  const x1 = ((excerpt.start + excerpt.length) / total) * w;
+  waveG.fillStyle = "rgba(139, 123, 255, .14)";
+  waveG.fillRect(x0, 0, x1 - x0, h);
+
+  // dB grid
+  waveG.font = `${10 * dpr}px Outfit, system-ui, sans-serif`;
+  waveG.textBaseline = "middle";
+  for (const db of [-6, -18, -36]) {
+    const r = 1 - db / DB_FLOOR;
+    for (const y of [h / 2 - (r * h) / 2, h / 2 + (r * h) / 2]) {
+      waveG.fillStyle = "rgba(255, 255, 255, .06)";
+      waveG.fillRect(0, Math.round(y), w, dpr);
+    }
+    waveG.fillStyle = "rgba(154, 152, 179, .6)";
+    waveG.fillText(`${db} dB`, 4 * dpr, h / 2 - (r * h) / 2 + 6 * dpr);
+  }
+
+  const barW = w / levels.length;
+  const grad = waveG.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "#3de0d0");
+  grad.addColorStop(0.5, "#8b7bff");
+  grad.addColorStop(1, "#3de0d0");
+  for (let i = 0; i < levels.length; i++) {
+    const x = i * barW;
+    const r = 1 - levels[i] / DB_FLOOR;
+    const bh = Math.max(dpr, r * (h - 4 * dpr));
+    waveG.fillStyle = x + barW >= x0 && x <= x1 ? grad : "#3a3a55";
+    waveG.fillRect(x, (h - bh) / 2, Math.max(dpr, barW - dpr * 0.5), bh);
+  }
+
+  // iPhone-style trim frame: two handles joined by top and bottom borders.
+  const hw = HANDLE_W * dpr;
+  const border = 3 * dpr;
+  const left = Math.max(0, Math.min(x0, w - 2 * hw));
+  const right = Math.min(w, Math.max(x1, left + 2 * hw));
+  waveG.fillStyle = HANDLE_COLOR;
+  waveG.fillRect(left, 0, right - left, border);
+  waveG.fillRect(left, h - border, right - left, border);
+  for (const x of [left, right - hw]) {
+    waveG.beginPath();
+    if (waveG.roundRect) waveG.roundRect(x, 0, hw, h, 4 * dpr);
+    else waveG.rect(x, 0, hw, h);
+    waveG.fill();
+    waveG.fillStyle = "rgba(0, 0, 0, .55)";
+    waveG.fillRect(x + hw / 2 - dpr, h / 2 - 8 * dpr, 2 * dpr, 16 * dpr);
+    waveG.fillStyle = HANDLE_COLOR;
+  }
+
+  if (playing) {
+    const t = playPosition();
+    waveG.fillStyle = "#3de0d0";
+    waveG.fillRect(Math.round((t / total) * w), 0, 2 * dpr, h);
+  }
+}
+
+function waveLoop() {
+  drawWave();
+  if (playing) requestAnimationFrame(waveLoop);
+}
+
+function waveTime(e) {
+  const rect = wave.getBoundingClientRect();
+  const r = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+  return { r, t: r * buffer.duration };
+}
+
+// Which part of the trim frame a pointer is on: "start"/"end" handle, "move" inside.
+function waveHit(e) {
+  const rect = wave.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const x0 = (sel.start / buffer.duration) * rect.width;
+  const x1 = (sel.end / buffer.duration) * rect.width;
+  const grab = HANDLE_W + 6;
+  const dStart = Math.abs(x - (x0 + HANDLE_W / 2));
+  const dEnd = Math.abs(x - (x1 - HANDLE_W / 2));
+  if (Math.min(dStart, dEnd) <= grab) return dStart <= dEnd ? "start" : "end";
+  return x > x0 && x < x1 ? "move" : null;
+}
+
+let waveDrag = null; // { mode, offset }
+function dragWave(e) {
+  const { t } = waveTime(e);
+  const total = buffer.duration;
+  if (waveDrag.mode === "start") {
+    sel.start = Math.max(0, Math.min(t, sel.end - minExcerpt()));
+    ui.duration.value = "custom";
+  } else if (waveDrag.mode === "end") {
+    sel.end = Math.min(total, Math.max(t, sel.start + minExcerpt()));
+    ui.duration.value = "custom";
+  } else {
+    const len = sel.end - sel.start;
+    sel.start = Math.max(0, Math.min(t - waveDrag.offset, total - len));
+    sel.end = sel.start + len;
+  }
   computeExcerpt();
 }
+
+wave.addEventListener("pointerdown", (e) => {
+  if (!buffer || waveWrap.classList.contains("disabled")) return;
+  const { t } = waveTime(e);
+  const hit = waveHit(e);
+  // Tapping outside the frame moves the whole selection to start there.
+  waveDrag = { mode: hit || "move", offset: hit === "move" ? t - sel.start : 0 };
+  wave.setPointerCapture(e.pointerId);
+  dragWave(e);
+});
+wave.addEventListener("pointermove", (e) => {
+  if (!buffer) return;
+  const { r, t } = waveTime(e);
+  const db = levels[Math.min(levels.length - 1, Math.floor(r * levels.length))];
+  waveTip.hidden = false;
+  waveTip.style.left = `${Math.min(88, Math.max(12, r * 100))}%`;
+  waveTip.textContent = `${fmt(t)} · ${db <= DB_FLOOR ? "silence" : `${db.toFixed(0)} dB`}`;
+  if (waveDrag) return dragWave(e);
+  const hit = waveHit(e);
+  wave.style.cursor = hit === "start" || hit === "end" ? "ew-resize" : hit === "move" ? "grab" : "pointer";
+});
+wave.addEventListener("pointerleave", () => { waveTip.hidden = true; });
+wave.addEventListener("pointerup", () => {
+  if (!waveDrag) return;
+  waveDrag = null;
+  if (playing) startSource();
+});
+window.addEventListener("resize", drawWave);
 
 // ---------- Demo track (synthesised, no external file) ----------
 async function makeDemo() {
@@ -431,7 +651,94 @@ function fitText(text, maxW, size, weight) {
   while (g.measureText(text).width > maxW && s > 28);
 }
 
+// Headphones icon with "8dsongslive" written around it; the ring turns with the sound.
+const LOGO_TEXT = "8dsongslive • 8dsongslive • ";
+const LOGO_SCALE = 0.55;
+function drawLogo(x, y) {
+  const R = 92;
+  const cx = 0, cy = 0;
+  g.save();
+  g.translate(x, y);
+  g.scale(LOGO_SCALE, LOGO_SCALE);
+  g.fillStyle = "rgba(0,0,0,0.35)";
+  g.beginPath(); g.arc(cx, cy, R + 22, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = "rgba(255,255,255,0.85)"; g.lineWidth = 3;
+  g.beginPath(); g.arc(cx, cy, R + 22, 0, Math.PI * 2); g.stroke();
+
+  // headphones
+  g.strokeStyle = "#fff"; g.fillStyle = "#fff";
+  g.lineWidth = 9; g.lineCap = "round";
+  g.beginPath(); g.arc(cx, cy + 2, 38, Math.PI * 1.08, Math.PI * 1.92); g.stroke();
+  for (const side of [-1, 1]) {
+    roundRect(cx + side * 38 - 13, cy - 4, 26, 44, 11); g.fill();
+  }
+  g.fillStyle = "#3de0d0";
+  for (const side of [-1, 1]) {
+    roundRect(cx + side * 38 - 5, cy + 4, 10, 28, 5); g.fill();
+  }
+
+  // text on a circle, letters spread evenly over the full turn
+  g.font = "800 26px Outfit, system-ui, sans-serif";
+  g.fillStyle = "#fff";
+  g.textAlign = "center"; g.textBaseline = "middle";
+  const chars = [...LOGO_TEXT];
+  const widths = chars.map((c) => g.measureText(c).width);
+  const total = widths.reduce((a, b) => a + b, 0);
+  let a = angle * 0.5;
+  chars.forEach((c, i) => {
+    const step = (widths[i] / total) * Math.PI * 2;
+    a += step / 2;
+    g.save();
+    g.translate(cx + R * Math.sin(a), cy - R * Math.cos(a));
+    g.rotate(a);
+    g.fillText(c, 0, 0);
+    g.restore();
+    a += step / 2;
+  });
+  g.restore();
+}
+
+// AirPods Pro line icon (SVG Repo), recoloured white for the dark intro.
+const airpodsImg = new Image();
+airpodsImg.src = "assets/airpods.svg";
+
+// Intro card: dark screen with AirPods and "Put on your headphones", fading into the video.
+function drawIntro(elapsed, length) {
+  const fadeOut = Math.min(1, (length - elapsed) / 0.35);
+  const fadeIn = Math.min(1, elapsed / 0.3);
+  g.save();
+  g.globalAlpha = fadeOut;
+  g.fillStyle = "#07070f";
+  g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W / 2, 820, 0, W / 2, 820, 520);
+  glow.addColorStop(0, "rgba(139,123,255,0.35)");
+  glow.addColorStop(1, "rgba(139,123,255,0)");
+  g.fillStyle = glow;
+  g.fillRect(0, 0, W, H);
+
+  g.globalAlpha = fadeOut * fadeIn;
+  if (airpodsImg.complete && airpodsImg.naturalWidth) {
+    const size = 720 * (1 + elapsed * 0.04);
+    const float = Math.sin(elapsed * 4) * 10;
+    g.save();
+    g.shadowColor = "rgba(139,123,255,0.8)"; g.shadowBlur = 40;
+    g.drawImage(airpodsImg, (W - size) / 2, 720 - size / 2 + float, size, size);
+    g.restore();
+  }
+
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillStyle = "#fff";
+  g.font = "800 92px Outfit, system-ui, sans-serif";
+  g.fillText("PUT ON YOUR", W / 2, 1120);
+  g.fillText("HEADPHONES", W / 2, 1225);
+  g.fillStyle = "#3de0d0";
+  g.font = "600 44px Outfit, system-ui, sans-serif";
+  g.fillText("for the full 8D experience", W / 2, 1320);
+  g.restore();
+}
+
 function drawOverlay(bass) {
+  if (ui.showLogo.checked) drawLogo(W - 100, 100);
   g.textAlign = "center";
   g.textBaseline = "middle";
 
@@ -517,7 +824,8 @@ function frame(now) {
   const target = readBass();
   bassLevel += (target - bassLevel) * (target > bassLevel ? 0.5 : 0.12);
 
-  if (playing) {
+  const introLeft = playing ? playStartCtx - ctx.currentTime : 0;
+  if (playing && introLeft <= 0) {
     angle += (dt * Math.PI * 2) / +ui.speed.value;
     const x = Math.sin(angle), z = -Math.cos(angle), y = 0.15 * Math.sin(angle * 0.5);
     const at = ctx.currentTime;
@@ -528,6 +836,7 @@ function frame(now) {
 
   scene.draw(t, bassLevel);
   drawOverlay(bassLevel);
+  if (introLength && introLeft > 0) drawIntro(introLength - introLeft, introLength);
   if (recording) updateProgress();
   requestAnimationFrame(frame);
 }
@@ -551,10 +860,15 @@ if (!mime) ui.exportBtn.disabled = true;
 let recording = null;
 
 function updateProgress() {
-  const el = Math.max(0, ctx.currentTime - playStartCtx);
-  const p = Math.min(1, el / excerpt.length);
+  if (ctx.currentTime < playStartCtx) {
+    ui.progressText.textContent = "Enregistrement de l'intro…";
+    return;
+  }
+  const el = ctx.currentTime - playStartCtx;
+  const total = excerpt.length / rate();
+  const p = Math.min(1, el / total);
   ui.progressBar.style.width = `${(p * 100).toFixed(1)}%`;
-  ui.progressText.textContent = `Enregistrement… ${fmt(el)} / ${fmt(excerpt.length)}`;
+  ui.progressText.textContent = `Enregistrement… ${fmt(el)} / ${fmt(total)}`;
 }
 
 async function startExport() {
@@ -605,8 +919,11 @@ function setBusy(busy) {
   ui.file.disabled = busy;
   ui.url.disabled = busy;
   $("urlBtn").disabled = busy;
-  ui.start.disabled = busy || ui.duration.value === "full";
+  $("pasteBtn").disabled = busy;
+  ui.start.disabled = busy;
+  waveWrap.classList.toggle("disabled", busy);
   ui.duration.disabled = busy;
+  ui.rate.disabled = busy;
   if (!busy) ui.progressBar.style.width = "0";
 }
 
@@ -624,12 +941,39 @@ function syncOutputs() {
   applyMix();
 }
 [ui.speed, ui.intensity, ui.reverb].forEach((el) => el.addEventListener("input", syncOutputs));
+ui.showIntro.addEventListener("change", computeExcerpt);
 
+// The slider moves the whole selection, keeping its length.
 ui.start.addEventListener("input", () => {
-  ui.startOut.textContent = fmt(+ui.start.value);
+  const len = sel.end - sel.start;
+  sel.start = +ui.start.value;
+  sel.end = sel.start + len;
   computeExcerpt();
 });
-ui.duration.addEventListener("change", computeExcerpt);
+ui.duration.addEventListener("change", applyPreset);
+
+function syncRate() {
+  ui.rateOut.textContent = `${rate().toFixed(2)}×`;
+  computeExcerpt();
+}
+let lastRate = rate();
+ui.rate.addEventListener("input", () => {
+  // Changing speed while playing: keep the playhead where it is (no shift during the intro).
+  if (source) {
+    source.playbackRate.setValueAtTime(rate(), ctx.currentTime);
+    if (ctx.currentTime > playStartCtx) {
+      const pos = excerpt.start + (ctx.currentTime - playStartCtx) * lastRate;
+      playStartCtx = ctx.currentTime - (pos - excerpt.start) / rate();
+    }
+  }
+  lastRate = rate();
+  syncRate();
+});
+ui.rate.addEventListener("dblclick", () => {
+  ui.rate.value = 1;
+  ui.rate.dispatchEvent(new Event("input"));
+});
+syncRate();
 
 scenes.forEach((s) => {
   const b = document.createElement("button");
@@ -729,6 +1073,18 @@ async function loadUrl(raw) {
     btn.disabled = false;
   }
 }
+
+$("pasteBtn").addEventListener("click", async () => {
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    if (!text) return urlMessage("Le presse-papiers est vide.", true);
+    ui.url.value = text;
+    loadUrl(text);
+  } catch (_) {
+    urlMessage("Accès au presse-papiers refusé. Colle le lien avec ⌘V.", true);
+    ui.url.focus();
+  }
+});
 
 $("urlForm").addEventListener("submit", (e) => {
   e.preventDefault();

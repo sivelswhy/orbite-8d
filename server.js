@@ -11,6 +11,7 @@ const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
 };
 
 http.createServer((req, res) => {
@@ -29,7 +30,11 @@ http.createServer((req, res) => {
       res.writeHead(error.code === "ENOENT" ? 404 : 500);
       return res.end("Not found");
     }
-    res.writeHead(200, { "Content-Type": contentTypes[path.extname(file)] || "application/octet-stream" });
+    res.writeHead(200, {
+      "Content-Type": contentTypes[path.extname(file)] || "application/octet-stream",
+      // Local dev server: always serve the files on disk, never a cached mix of old and new.
+      "Cache-Control": "no-store",
+    });
     res.end(data);
   });
 }).listen(port, () => {

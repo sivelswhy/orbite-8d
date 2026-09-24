@@ -21,4 +21,5 @@ Variables facultatives : `YTDLP_PATH` et `FFMPEG_PATH` (binaires hors du PATH), 
 - **Paysages** : Nuit boréale, Horizon néon, Sommets à l'aube, Mer de lune, Dunes — réactifs aux basses.
 - **Texte** : badge « 8D AUDIO », titre, artiste, schéma de la position du son.
 - **Extrait** : début au choix, 15 s à 3 min, ou morceau entier.
+- **Intro** : carte « Put on your headphones » de 1,5 s avant la musique, avec une icône AirPods Pro (SVG Repo, `assets/airpods.svg`).
 - **Export** : `canvas.captureStream` + `MediaRecorder`, MP4 si le navigateur le permet (Safari, Chrome récent), sinon WebM. Enregistrement en temps réel, onglet au premier plan.
