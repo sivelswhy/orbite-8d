@@ -1,48 +1,11 @@
 "use strict";
 
 const { spawn } = require("child_process");
-const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "youtu.be", "youtube-nocookie.com"]);
-
-function isVercelRuntime() {
-  return Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.NOW_REGION);
-}
-
-function getRuntimeBlockMessage() {
-  if (!isVercelRuntime() || process.env.YTDLP_BACKEND_URL) return null;
-  return "YouTube est bloqué par les anti-bots de Google sur les IP Vercel. Configure YTDLP_BACKEND_URL et YTDLP_BACKEND_SECRET vers un serveur yt-dlp (voir README).";
-}
-
-// Signs a YouTube URL so a public yt-dlp backend only serves requests issued by this site.
-function signUrl(url, secret) {
-  return crypto.createHmac("sha256", secret).update(url).digest("hex");
-}
-
-function isValidSignature(url, signature, secret) {
-  const expected = Buffer.from(signUrl(url, secret));
-  const given = Buffer.from(String(signature || ""));
-  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
-}
-
-// Requests coming through a tunnel or reverse proxy carry forwarding headers;
-// direct requests to the local server do not.
-function isForwarded(req) {
-  return Boolean(req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"]);
-}
-
-function getBackendRedirect(url) {
-  const backend = process.env.YTDLP_BACKEND_URL;
-  const secret = process.env.YTDLP_BACKEND_SECRET;
-  if (!isVercelRuntime() || !backend || !secret) return null;
-  const target = new URL("/api/youtube-audio", backend);
-  target.searchParams.set("url", url);
-  target.searchParams.set("sig", signUrl(url, secret));
-  return target.toString();
-}
 
 function isYouTubeUrl(value) {
   try {
@@ -97,20 +60,6 @@ async function youtubeAudio(req, res) {
   const url = getParam(req, "url");
   if (!url || !isYouTubeUrl(url)) return sendText(res, 400, "A valid HTTPS YouTube URL is required");
 
-  const runtimeMessage = getRuntimeBlockMessage();
-  if (runtimeMessage) return sendText(res, 503, runtimeMessage);
-
-  const redirect = getBackendRedirect(url);
-  if (redirect) {
-    res.writeHead(302, { "Cache-Control": "no-store", Location: redirect });
-    return res.end();
-  }
-
-  const secret = process.env.YTDLP_BACKEND_SECRET;
-  if (secret && isForwarded(req) && !isValidSignature(url, getParam(req, "sig"), secret)) {
-    return sendText(res, 403, "Invalid signature");
-  }
-
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbite-ytdlp-"));
   const cleanup = () => fs.rm(outputDir, { recursive: true, force: true }, () => {});
   const ytdlp = spawn(process.env.YTDLP_PATH || "yt-dlp", getYtdlpArgs(url, outputDir), {
@@ -148,9 +97,5 @@ async function youtubeAudio(req, res) {
 }
 
 module.exports = youtubeAudio;
-module.exports.getBackendRedirect = getBackendRedirect;
-module.exports.isValidSignature = isValidSignature;
-module.exports.getRuntimeBlockMessage = getRuntimeBlockMessage;
 module.exports.getYtdlpArgs = getYtdlpArgs;
 module.exports.isYouTubeUrl = isYouTubeUrl;
-module.exports.isVercelRuntime = isVercelRuntime;
