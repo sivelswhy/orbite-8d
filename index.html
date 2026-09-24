@@ -49,15 +49,8 @@
       </div>
 
       <div class="group">
-        <h2>Paysage</h2>
-        <div class="chips" id="scenes"></div>
-      </div>
-
-      <div class="group">
-        <h2>Texte</h2>
-        <label>Titre <input type="text" id="title" maxlength="60" /></label>
-        <label>Artiste <input type="text" id="artist" maxlength="60" /></label>
-        <label class="check"><input type="checkbox" id="showHead" checked /> Schéma de la tête</label>
+        <h2>Affichage</h2>
+        <label class="check"><input type="checkbox" id="showHead" /> Schéma de la tête</label>
         <label class="check"><input type="checkbox" id="showLogo" checked /> Logo 8dsongslive</label>
         <label class="check"><input type="checkbox" id="showIntro" checked /> Intro « Put on your headphones » (1,5 s)</label>
       </div>
@@ -100,6 +93,11 @@
         <button id="cancel" class="secondary small">Annuler</button>
       </div>
       <a id="download" class="download" hidden>Télécharger la vidéo</a>
+      <div class="tiktok" id="tiktok" hidden>
+        <label>Légende TikTok <input type="text" id="caption" maxlength="2200" /></label>
+        <button id="tiktokBtn" class="primary">Publier sur TikTok</button>
+        <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre ; la première fois, connecte-toi à TikTok dedans. Tu confirmes avant la publication.</p>
+      </div>
       <p class="hint">L'enregistrement se fait en temps réel : garde cet onglet au premier plan. Format : <span id="format"></span>.</p>
     </section>
 

@@ -121,19 +121,6 @@ input[type="text"], select {
 
 .hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
 
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chips button {
-  padding: 8px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-.chips button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-
 .actions { display: flex; gap: 10px; }
 button.primary, button.secondary, .download {
   flex: 1;
@@ -152,6 +139,8 @@ button.small { padding: 6px 10px; font-size: 13px; flex: none; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 .download { display: block; background: var(--accent-2); border-color: var(--accent-2); color: #06201d; }
 .download[hidden] { display: none; }
+.tiktok { display: flex; flex-direction: column; gap: 8px; }
+.tiktok[hidden] { display: none; }
 
 .progress .bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; }
 .progress .bar div { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }

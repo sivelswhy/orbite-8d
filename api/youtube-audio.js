@@ -28,13 +28,23 @@ function getYtdlpArgs(url, outputDir) {
     "--no-playlist", "--no-warnings", "--no-progress", "--no-part",
     "--format", "bestaudio/best",
     "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
-    "--print", "after_move:%(title)s",
+    "--print", "after_move:%(title)s\t%(track|)s\t%(artist|)s\t%(uploader|)s",
     "--output", path.join(outputDir, "audio.%(ext)s"),
   ];
   if (process.env.FFMPEG_PATH) args.push("--ffmpeg-location", process.env.FFMPEG_PATH);
   if (process.env.YTDLP_COOKIES) args.push("--cookies", process.env.YTDLP_COOKIES);
   args.push("--", url);
   return args;
+}
+
+// yt-dlp prints "title<TAB>track<TAB>artist<TAB>uploader". Music videos have
+// track/artist; otherwise the page parses "Artist - Song" from the title and
+// falls back to the channel name.
+function parseInfo(line) {
+  const [title = "", track = "", artist = "", uploader = ""] = line.split("\t").map((v) => (v === "NA" ? "" : v.trim()));
+  const mainArtist = artist.split(",")[0].trim();
+  if (track && mainArtist) return { title: `${mainArtist} - ${track}`, artist: mainArtist };
+  return { title, artist: mainArtist || uploader };
 }
 
 function sendText(res, status, text) {
@@ -54,9 +64,9 @@ async function youtubeAudio(req, res) {
   const ytdlp = spawn(process.env.YTDLP_PATH || "yt-dlp", getYtdlpArgs(url, outputDir), {
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let title = "";
+  let info = "";
   let errorOutput = "";
-  ytdlp.stdout.on("data", (chunk) => { title += chunk.toString(); });
+  ytdlp.stdout.on("data", (chunk) => { info += chunk.toString(); });
   ytdlp.stderr.on("data", (chunk) => { errorOutput += chunk.toString(); });
   ytdlp.on("error", (error) => {
     cleanup();
@@ -71,11 +81,13 @@ async function youtubeAudio(req, res) {
       cleanup();
       return sendText(res, 502, errorOutput.trim() || "yt-dlp download failed");
     }
+    const meta = parseInfo(info.trim().split("\n").pop() || "");
     res.writeHead(200, {
       "Cache-Control": "no-store",
       "Content-Type": "audio/mpeg",
       "Content-Length": fs.statSync(file).size,
-      "X-Audio-Title": encodeURIComponent(title.trim().split("\n").pop() || ""),
+      "X-Audio-Title": encodeURIComponent(meta.title),
+      "X-Audio-Artist": encodeURIComponent(meta.artist),
     });
     fs.createReadStream(file).on("close", cleanup).on("error", () => res.destroy()).pipe(res);
   });
@@ -84,4 +96,5 @@ async function youtubeAudio(req, res) {
 
 module.exports = youtubeAudio;
 module.exports.getYtdlpArgs = getYtdlpArgs;
+module.exports.parseInfo = parseInfo;
 module.exports.isYouTubeUrl = isYouTubeUrl;

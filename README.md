@@ -18,8 +18,9 @@ Variables facultatives : `YTDLP_PATH` et `FFMPEG_PATH` (binaires hors du PATH), 
 
 - **Son** : mp3 / m4a / wav décodé dans le navigateur (Web Audio), depuis un fichier, un lien direct (liens Dropbox convertis automatiquement) ou un lien YouTube. L’API locale utilise `yt-dlp` et `ffmpeg` pour renvoyer un MP3 ; utilise uniquement des contenus que tu as le droit de télécharger.
 - **8D** : `PannerNode` HRTF en orbite ; basses (< 120 Hz) gardées au centre ; vitesse, intensité, réverbération (convolution) réglables.
-- **Paysages** : Nuit boréale, Horizon néon, Sommets à l'aube, Mer de lune, Dunes — réactifs aux basses.
-- **Texte** : badge « 8D AUDIO », titre, artiste, schéma de la position du son.
+- **Paysages** : vidéos verticales de villes de nuit (`assets/videos/*.mp4`, 1080×1920, H.264, sans son), enchaînées automatiquement en ordre aléatoire, avec un fondu entre les clips et un léger zoom sur les basses. Ces vidéos ne sont pas versionnées dans git.
+- **Affichage** : aucun texte sur la vidéo, seulement le filigrane 8dsongslive ; schéma de la tête en option.
 - **Extrait** : début au choix, 15 s à 3 min, ou morceau entier.
 - **Intro** : carte « Put on your headphones » de 1,5 s avant la musique, avec une icône AirPods Pro (SVG Repo, `assets/airpods.svg`).
+- **TikTok** : après l'export, « Publier sur TikTok » ouvre un Chromium (Playwright) qui envoie la vidéo et remplit la légende, puis publie après ta confirmation. Connexion à TikTok faite une fois à la main ; session gardée dans `~/.orbite-8d/tiktok-profile`. Première installation : `npm install && npx playwright install chromium`. Si TikTok change sa page, corrige `SELECTORS` dans `api/tiktok.js`.
 - **Export** : `canvas.captureStream` + `MediaRecorder`, MP4 si le navigateur le permet (Safari, Chrome récent), sinon WebM. Enregistrement en temps réel, onglet au premier plan.

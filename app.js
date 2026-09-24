@@ -11,7 +11,7 @@ const ui = {
   file: $("file"), drop: $("drop"), fileName: $("fileName"), url: $("url"),
   speed: $("speed"), intensity: $("intensity"), reverb: $("reverb"),
   speedOut: $("speedOut"), intensityOut: $("intensityOut"), reverbOut: $("reverbOut"),
-  scenes: $("scenes"), title: $("title"), artist: $("artist"), showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
+  showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
   start: $("start"), startOut: $("startOut"), duration: $("duration"), excerptInfo: $("excerptInfo"),
   rate: $("rate"), rateOut: $("rateOut"),
   play: $("play"), exportBtn: $("export"), cancel: $("cancel"),
@@ -94,15 +94,20 @@ function stopSource() {
   drawWave();
 }
 
-function startSource(onEnd) {
+// live: the excerpt changed while listening, so jump to it without the intro
+// and without reshuffling the videos.
+function startSource(onEnd, { live = false } = {}) {
   stopSource();
   computeExcerpt();
   source = new AudioBufferSourceNode(ctx, { buffer, playbackRate: rate() });
   source.connect(lowpass);
   source.connect(highpass);
   source.connect(analyser);
-  angle = 0;
-  introLength = ui.showIntro.checked ? INTRO_SECONDS : 0;
+  if (!live) {
+    angle = 0;
+    restartScenes();
+  }
+  introLength = !live && ui.showIntro.checked ? INTRO_SECONDS : 0;
   playStartCtx = ctx.currentTime + 0.05 + introLength;
   source.start(playStartCtx, excerpt.start, excerpt.length);
   source.onended = () => { stopSource(); onEnd && onEnd(); };
@@ -112,6 +117,15 @@ function startSource(onEnd) {
 }
 
 // Playback speed of the excerpt (changes pitch too, like "slowed" / "sped up" edits).
+// Restarts the playing excerpt after a change of start/end/duration (debounced for sliders).
+let relaunchTimer = null;
+function relaunchIfPlaying() {
+  clearTimeout(relaunchTimer);
+  relaunchTimer = setTimeout(() => {
+    if (playing && !recording) startSource(null, { live: true });
+  }, 120);
+}
+
 function rate() {
   return +ui.rate.value;
 }
@@ -140,6 +154,27 @@ function computeExcerpt() {
     `vidéo de ${fmt(excerpt.length / rate())}${rate() === 1 ? "" : ` à ${rate().toFixed(2)}×`}` +
     (ui.showIntro.checked ? ` + ${String(INTRO_SECONDS).replace(".", ",")} s d'intro` : "");
   drawWave();
+}
+
+// Base name of the exported file, derived from the track.
+let trackName = "orbite-8d";
+// Song and artist, used for the default TikTok caption.
+let trackInfo = { song: "", artist: "" };
+
+// "Artist - Song (Official Video)" → { artist, song }; fallbackArtist is used
+// when the title has no "Artist - " part (e.g. the YouTube channel name).
+function describeTrack(title, fallbackArtist = "") {
+  const clean = (s) => s
+    .replace(/\s*[([][^)\]]*\b(official|video|audio|lyrics?|clip|visuali[sz]er|hd|4k|remaster(ed)?|mv)\b[^)\]]*[)\]]/gi, "")
+    .replace(/_+/g, " ").replace(/\s+/g, " ").trim();
+  const m = title.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (m) return { artist: clean(m[1]), song: clean(m[2]) };
+  const artist = fallbackArtist.replace(/\s*-\s*Topic$/i, "").replace(/\s*VEVO$/i, "");
+  return { artist: clean(artist), song: clean(title) };
+}
+function fileBaseName(name) {
+  const base = name.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}\- ]/gu, "").trim().replace(/\s+/g, "-");
+  return base.slice(0, 60) || "orbite-8d";
 }
 
 function fmt(s) {
@@ -350,7 +385,7 @@ wave.addEventListener("pointerleave", () => { waveTip.hidden = true; });
 wave.addEventListener("pointerup", () => {
   if (!waveDrag) return;
   waveDrag = null;
-  if (playing) startSource();
+  relaunchIfPlaying();
 });
 window.addEventListener("resize", drawWave);
 
@@ -419,220 +454,113 @@ async function makeDemo() {
   return off.startRendering();
 }
 
-// ---------- Scenes ----------
-const rand = mulberry32(8);
-function mulberry32(a) {
-  return () => {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-const stars = Array.from({ length: 220 }, () => ({
-  x: rand() * W, y: rand() * H * 0.65, r: rand() * 2.4 + 0.5, p: rand() * Math.PI * 2,
-}));
-const grains = Array.from({ length: 90 }, () => ({ x: rand() * W, y: H * 0.5 + rand() * H * 0.5, s: rand() * 2 + 1 }));
+// ---------- Scenes (vertical 1080×1920 city videos, muted) ----------
+// Every clip plays once in a shuffled order, then the list is reshuffled.
+const scenes = [
+  { id: "dubai-downtown", name: "Dubai Downtown" },
+  { id: "dubai-lumieres", name: "Dubai lumières" },
+  { id: "bahrein", name: "Bahreïn" },
+  { id: "bangkok", name: "Bangkok" },
+  { id: "shanghai", name: "Shanghai" },
+  { id: "chine", name: "Chine" },
+  { id: "islamabad", name: "Islamabad" },
+  { id: "londres", name: "Londres" },
+  { id: "paris", name: "Paris" },
+  { id: "new-york", name: "New York" },
+  { id: "avion", name: "Vue d'avion" },
+  { id: "miami", name: "Miami en voiture" },
+  { id: "londres-knightsbridge", name: "Londres en voiture" },
+];
+const CROSSFADE_MS = 400;
 
-function vGrad(stops, y0 = 0, y1 = H) {
-  const gr = g.createLinearGradient(0, y0, 0, y1);
-  stops.forEach(([o, c]) => gr.addColorStop(o, c));
-  return gr;
-}
+let current = null; // scene on screen
+let fading = null; // { video, start } of the clip fading out
+let queue = [];
 
-function drawStars(t, bass, alpha = 1) {
-  for (const s of stars) {
-    const tw = 0.5 + 0.5 * Math.sin(t * 2 + s.p);
-    g.globalAlpha = alpha * (0.3 + 0.7 * tw) * (0.8 + bass * 0.4);
-    g.fillStyle = "#fff";
-    g.beginPath(); g.arc(s.x, s.y, s.r, 0, Math.PI * 2); g.fill();
+// Safari only keeps decoding frames of videos that are in the document.
+const videoHolder = document.createElement("div");
+videoHolder.style.cssText = "position:fixed;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none";
+document.body.appendChild(videoHolder);
+
+function sceneVideo(s) {
+  if (!s.video) {
+    const v = document.createElement("video");
+    v.src = `assets/videos/${s.id}.mp4`;
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "auto";
+    v.addEventListener("ended", () => {
+      if (current === s) showScene(nextRandomScene());
+    });
+    videoHolder.appendChild(v);
+    s.video = v;
   }
+  return s.video;
+}
+
+function shuffle(list) {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function nextRandomScene() {
+  if (!queue.length) {
+    queue = shuffle(scenes);
+    if (queue[0] === current) queue.push(queue.shift()); // never the same clip twice in a row
+  }
+  const next = queue.shift();
+  sceneVideo(queue[0] || next); // start buffering the one after
+  return next;
+}
+
+function showScene(s, { crossfade = true } = {}) {
+  const v = sceneVideo(s);
+  if (fading) fading.video.pause();
+  fading = crossfade && current && current !== s ? { video: current.video, start: performance.now() } : null;
+  if (!fading && current && current !== s) current.video.pause();
+  current = s;
+  v.currentTime = 0;
+  v.play().catch(() => {});
+}
+
+// Called when playback/export starts: a fresh random order for each video.
+function restartScenes() {
+  queue = [];
+  showScene(nextRandomScene(), { crossfade: false });
+}
+
+function drawVideo(v, bass, alpha) {
+  if (v.readyState < 2) return;
+  const zoom = 1.02 + bass * 0.04;
+  const w = W * zoom, h = H * zoom;
+  g.globalAlpha = alpha;
+  g.drawImage(v, (W - w) / 2, (H - h) / 2, w, h);
   g.globalAlpha = 1;
 }
 
-function ridge(baseY, amp, freq, seed, color, t = 0, speed = 0) {
-  g.fillStyle = color;
-  g.beginPath();
-  g.moveTo(0, H);
-  for (let x = 0; x <= W; x += 12) {
-    const u = x / W * freq + seed + t * speed;
-    const y = baseY - amp * (0.55 * Math.abs(Math.sin(u)) + 0.3 * Math.sin(u * 2.3 + seed) + 0.15 * Math.sin(u * 5.1));
-    g.lineTo(x, y);
+// Video full-frame with a slight bass "pump", darkened a little for the overlay.
+function drawScene(bass) {
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, W, H);
+  drawVideo(sceneVideo(current), bass, 1);
+  if (fading) {
+    const k = 1 - (performance.now() - fading.start) / CROSSFADE_MS;
+    if (k > 0) drawVideo(fading.video, bass, k);
+    else { fading.video.pause(); fading = null; }
   }
-  g.lineTo(W, H);
-  g.closePath();
-  g.fill();
+  const shade = g.createLinearGradient(0, 0, 0, H);
+  shade.addColorStop(0, "rgba(0,0,0,0.25)");
+  shade.addColorStop(0.5, "rgba(0,0,0,0.05)");
+  shade.addColorStop(1, "rgba(0,0,0,0.35)");
+  g.fillStyle = shade;
+  g.fillRect(0, 0, W, H);
 }
 
-const scenes = [
-  {
-    id: "boreale", name: "Nuit boréale",
-    draw(t, bass) {
-      g.fillStyle = vGrad([[0, "#020617"], [0.55, "#0b1f3a"], [1, "#04111d"]]);
-      g.fillRect(0, 0, W, H);
-      drawStars(t, bass);
-      g.globalCompositeOperation = "lighter";
-      const bands = [["#22ffb0", 0], ["#3d9bff", 1.7], ["#b25cff", 3.1]];
-      for (const [col, ph] of bands) {
-        for (let x = 0; x <= W; x += 6) {
-          const y = 520 + ph * 70 + Math.sin(x / 260 + t * 0.5 + ph) * 110 + Math.sin(x / 90 + t * 1.3) * 25;
-          const h = 260 + 160 * Math.sin(x / 180 + t * 0.7 + ph) + bass * 260;
-          const gr = g.createLinearGradient(0, y - h, 0, y);
-          gr.addColorStop(0, "rgba(0,0,0,0)");
-          gr.addColorStop(1, col);
-          g.globalAlpha = 0.07 + bass * 0.08;
-          g.fillStyle = gr;
-          g.fillRect(x, y - h, 6, h);
-        }
-      }
-      g.globalAlpha = 1;
-      g.globalCompositeOperation = "source-over";
-      ridge(1320, 260, 3, 1, "#0a1628");
-      ridge(1480, 180, 5, 4, "#050d19");
-      g.fillStyle = vGrad([[0, "#08182c"], [1, "#02060c"]], 1480, H);
-      g.fillRect(0, 1560, W, H - 1560);
-    },
-  },
-  {
-    id: "neon", name: "Horizon néon",
-    draw(t, bass) {
-      const hz = 1080;
-      g.fillStyle = vGrad([[0, "#12002b"], [0.45, "#4a0a6b"], [0.56, "#ff3d9a"], [0.5625, "#12002b"], [1, "#0a0018"]]);
-      g.fillRect(0, 0, W, H);
-      drawStars(t, bass, 0.6);
-      // sun
-      const r = 300 + bass * 40;
-      const cx = W / 2, cy = hz - 120;
-      g.save();
-      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.clip();
-      g.fillStyle = vGrad([[0, "#ffe66d"], [1, "#ff2e88"]], cy - r, cy + r);
-      g.fillRect(cx - r, cy - r, r * 2, r * 2);
-      g.fillStyle = "#2a0845";
-      for (let i = 0; i < 7; i++) {
-        const y = cy + 20 + i * 38 + ((t * 20) % 38);
-        g.fillRect(cx - r, y, r * 2, 4 + i * 2.5);
-      }
-      g.restore();
-      g.shadowColor = "#ff2e88"; g.shadowBlur = 60 + bass * 80;
-      g.strokeStyle = "rgba(255,46,136,0.6)"; g.lineWidth = 4;
-      g.beginPath(); g.arc(cx, cy, r, Math.PI, 0); g.stroke();
-      g.shadowBlur = 0;
-      // ground + grid
-      g.fillStyle = "#0a0018";
-      g.fillRect(0, hz, W, H - hz);
-      g.strokeStyle = `rgba(61,224,255,${0.55 + bass * 0.45})`;
-      g.lineWidth = 3;
-      g.shadowColor = "#3de0ff"; g.shadowBlur = 18;
-      for (let i = -14; i <= 14; i++) {
-        g.beginPath(); g.moveTo(cx + i * 20, hz); g.lineTo(cx + i * 260, H); g.stroke();
-      }
-      const off = (t * 0.6) % 1;
-      for (let i = 0; i < 16; i++) {
-        const p = (i + off) / 16;
-        const y = hz + Math.pow(p, 2.2) * (H - hz);
-        g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
-      }
-      g.shadowBlur = 0;
-    },
-  },
-  {
-    id: "aube", name: "Sommets à l'aube",
-    draw(t, bass) {
-      g.fillStyle = vGrad([[0, "#2b3a67"], [0.35, "#b86b8a"], [0.55, "#ffb88a"], [1, "#ffe0b0"]]);
-      g.fillRect(0, 0, W, H);
-      const sy = 900 - Math.sin(t * 0.05) * 40;
-      const glow = g.createRadialGradient(W / 2, sy, 20, W / 2, sy, 520 + bass * 200);
-      glow.addColorStop(0, "rgba(255,245,210,1)");
-      glow.addColorStop(0.2, "rgba(255,210,150,0.7)");
-      glow.addColorStop(1, "rgba(255,180,120,0)");
-      g.fillStyle = glow; g.fillRect(0, 0, W, H);
-      ridge(1040, 380, 2.2, 2, "rgba(122,86,130,0.85)", t, 0.01);
-      ridge(1220, 330, 3, 5, "rgba(88,60,104,0.9)", t, 0.02);
-      // mist
-      for (let i = 0; i < 3; i++) {
-        const y = 1260 + i * 90;
-        g.fillStyle = vGrad([[0, "rgba(255,230,220,0)"], [0.5, `rgba(255,230,220,${0.18 + bass * 0.12})`], [1, "rgba(255,230,220,0)"]], y - 60, y + 60);
-        g.fillRect(0, y - 60, W, 120);
-      }
-      ridge(1450, 280, 4, 9, "#3b2748", t, 0.035);
-      ridge(1680, 200, 6, 3, "#1f1428", t, 0.05);
-    },
-  },
-  {
-    id: "lune", name: "Mer de lune",
-    draw(t, bass) {
-      const hz = 1150;
-      g.fillStyle = vGrad([[0, "#030712"], [0.6, "#112240"], [1, "#050b18"]]);
-      g.fillRect(0, 0, W, H);
-      drawStars(t, bass);
-      const mx = W * 0.62, my = 560, mr = 150 + bass * 12;
-      const halo = g.createRadialGradient(mx, my, mr, mx, my, mr * 3.5);
-      halo.addColorStop(0, "rgba(200,220,255,0.35)");
-      halo.addColorStop(1, "rgba(200,220,255,0)");
-      g.fillStyle = halo; g.fillRect(0, 0, W, hz);
-      g.fillStyle = "#eef3ff";
-      g.beginPath(); g.arc(mx, my, mr, 0, Math.PI * 2); g.fill();
-      g.fillStyle = "rgba(170,185,215,0.5)";
-      [[-40, -30, 28], [50, 30, 20], [-10, 60, 16], [30, -60, 12]].forEach(([dx, dy, r]) => {
-        g.beginPath(); g.arc(mx + dx, my + dy, r, 0, Math.PI * 2); g.fill();
-      });
-      g.fillStyle = vGrad([[0, "#0c1d3a"], [1, "#02060f"]], hz, H);
-      g.fillRect(0, hz, W, H - hz);
-      // reflection shimmer
-      for (let i = 0; i < 60; i++) {
-        const p = i / 60;
-        const y = hz + 10 + p * p * (H - hz);
-        const w = (40 + p * 260) * (0.6 + 0.4 * Math.sin(t * 3 + i * 1.7)) * (1 + bass * 0.6);
-        g.fillStyle = `rgba(220,235,255,${0.5 * (1 - p)})`;
-        g.fillRect(mx - w / 2 + Math.sin(t * 2 + i) * 20 * p, y, w, 3 + p * 6);
-      }
-      // wave lines
-      g.strokeStyle = "rgba(120,160,220,0.25)"; g.lineWidth = 2;
-      for (let i = 0; i < 18; i++) {
-        const y0 = hz + 30 + Math.pow(i / 18, 1.8) * (H - hz);
-        g.beginPath();
-        for (let x = 0; x <= W; x += 20) {
-          const y = y0 + Math.sin(x / (60 + i * 8) + t * (1 + i * 0.1)) * (2 + i * 0.8) * (1 + bass);
-          x ? g.lineTo(x, y) : g.moveTo(x, y);
-        }
-        g.stroke();
-      }
-    },
-  },
-  {
-    id: "dunes", name: "Dunes",
-    draw(t, bass) {
-      g.fillStyle = vGrad([[0, "#1d2b64"], [0.4, "#f8a55f"], [0.62, "#ffd89b"], [1, "#e08a4c"]]);
-      g.fillRect(0, 0, W, H);
-      const sx = W * 0.35, sy = 820;
-      const sun = g.createRadialGradient(sx, sy, 0, sx, sy, 360 + bass * 150);
-      sun.addColorStop(0, "rgba(255,250,220,1)");
-      sun.addColorStop(0.25, "rgba(255,220,150,0.8)");
-      sun.addColorStop(1, "rgba(255,200,120,0)");
-      g.fillStyle = sun; g.fillRect(0, 0, W, H);
-      const dune = (base, amp, fr, seed, c1, c2, sp) => {
-        g.fillStyle = vGrad([[0, c1], [1, c2]], base - amp, H);
-        g.beginPath(); g.moveTo(0, H);
-        for (let x = 0; x <= W; x += 10) {
-          const u = x / W * fr + seed + t * sp;
-          g.lineTo(x, base - amp * (0.6 * Math.sin(u) + 0.4 * Math.sin(u * 0.47 + seed)));
-        }
-        g.lineTo(W, H); g.closePath(); g.fill();
-      };
-      dune(1150, 120, 3, 1, "#e9a35e", "#b86a35", 0.01);
-      dune(1320, 150, 2.4, 3, "#d98a4a", "#9c522a", 0.02);
-      dune(1540, 170, 2, 6, "#c4733a", "#7a3b1c", 0.035);
-      dune(1760, 150, 1.6, 2, "#a85c2d", "#5a2a12", 0.05);
-      g.fillStyle = "rgba(255,230,190,0.55)";
-      for (const p of grains) {
-        const x = (p.x + t * 60 * p.s * (1 + bass)) % W;
-        const y = p.y + Math.sin(t * 2 + p.x) * 10;
-        g.fillRect(x, y, p.s * 2, p.s);
-      }
-    },
-  },
-];
-let scene = scenes[0];
+showScene(nextRandomScene());
 
 // ---------- Overlay ----------
 function roundRect(x, y, w, h, r) {
@@ -643,12 +571,6 @@ function roundRect(x, y, w, h, r) {
   g.arcTo(x, y + h, x, y, r);
   g.arcTo(x, y, x + w, y, r);
   g.closePath();
-}
-
-function fitText(text, maxW, size, weight) {
-  let s = size;
-  do { g.font = `${weight} ${s}px Outfit, system-ui, sans-serif`; s -= 4; }
-  while (g.measureText(text).width > maxW && s > 28);
 }
 
 // Headphones icon with "8dsongslive" written around it; the ring turns with the sound.
@@ -742,19 +664,6 @@ function drawOverlay(bass) {
   g.textAlign = "center";
   g.textBaseline = "middle";
 
-  // badge
-  const bw = 360, bh = 96, bx = (W - bw) / 2, by = 170;
-  g.fillStyle = "rgba(0,0,0,0.35)";
-  roundRect(bx, by, bw, bh, 48); g.fill();
-  g.strokeStyle = "rgba(255,255,255,0.85)"; g.lineWidth = 4;
-  roundRect(bx, by, bw, bh, 48); g.stroke();
-  g.fillStyle = "#fff";
-  g.font = "800 52px Outfit, system-ui, sans-serif";
-  g.fillText("8D AUDIO", W / 2, by + bh / 2 + 2);
-  g.font = "600 38px Outfit, system-ui, sans-serif";
-  g.fillStyle = "rgba(255,255,255,0.85)";
-  g.fillText("🎧 Mets tes écouteurs", W / 2, by + bh + 64);
-
   // head diagram
   if (ui.showHead.checked) {
     const cx = W / 2, cy = 1330, R = 190;
@@ -782,29 +691,12 @@ function drawOverlay(bass) {
     g.font = `800 ${Math.round(pr)}px Outfit, system-ui, sans-serif`;
     g.fillText("♪", px, py + 2);
   }
-
-  // title / artist
-  const title = ui.title.value.trim();
-  const artist = ui.artist.value.trim();
-  g.shadowColor = "rgba(0,0,0,0.6)"; g.shadowBlur = 24;
-  if (title) {
-    fitText(title, W - 160, 92, 800);
-    g.fillStyle = "#fff";
-    g.fillText(title, W / 2, 1640);
-  }
-  if (artist) {
-    fitText(artist, W - 200, 56, 600);
-    g.fillStyle = "rgba(255,255,255,0.8)";
-    g.fillText(artist, W / 2, 1735);
-  }
-  g.shadowBlur = 0;
 }
 
 // ---------- Render loop ----------
 const freq = new Uint8Array(analyser.frequencyBinCount);
 let bassLevel = 0;
 let lastFrame = performance.now();
-const clock0 = performance.now();
 
 function readBass() {
   if (!playing) return 0;
@@ -819,7 +711,6 @@ function readBass() {
 function frame(now) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
-  const t = (now - clock0) / 1000;
 
   const target = readBass();
   bassLevel += (target - bassLevel) * (target > bassLevel ? 0.5 : 0.12);
@@ -834,7 +725,7 @@ function frame(now) {
     panner.positionZ.setTargetAtTime(z, at, 0.015);
   }
 
-  scene.draw(t, bassLevel);
+  drawScene(bassLevel);
   drawOverlay(bassLevel);
   if (introLength && introLeft > 0) drawIntro(introLength - introLeft, introLength);
   if (recording) updateProgress();
@@ -877,6 +768,8 @@ async function startExport() {
   await document.fonts.ready;
   if (ui.download.href) URL.revokeObjectURL(ui.download.href);
   ui.download.hidden = true;
+  $("tiktok").hidden = true;
+  lastExport = null;
 
   const stream = new MediaStream([
     ...canvas.captureStream(30).getVideoTracks(),
@@ -893,11 +786,14 @@ async function startExport() {
     setBusy(false);
     if (cancelled) return;
     const blob = new Blob(chunks, { type: mime.split(";")[0] });
-    const base = (ui.title.value.trim() || "orbite-8d").replace(/[^\p{L}\p{N}\- ]/gu, "").trim().replace(/\s+/g, "-");
+    const base = trackName.replace(/[^\p{L}\p{N}\- ]/gu, "").trim().replace(/\s+/g, "-");
     ui.download.href = URL.createObjectURL(blob);
     ui.download.download = `${base}-8d.${ext}`;
     ui.download.textContent = `Télécharger la vidéo (${(blob.size / 1e6).toFixed(1)} Mo)`;
     ui.download.hidden = false;
+    lastExport = blob;
+    captionInput.value = defaultCaption();
+    $("tiktok").hidden = false;
   };
 
   setBusy(true);
@@ -949,8 +845,12 @@ ui.start.addEventListener("input", () => {
   sel.start = +ui.start.value;
   sel.end = sel.start + len;
   computeExcerpt();
+  relaunchIfPlaying();
 });
-ui.duration.addEventListener("change", applyPreset);
+ui.duration.addEventListener("change", () => {
+  applyPreset();
+  relaunchIfPlaying();
+});
 
 function syncRate() {
   ui.rateOut.textContent = `${rate().toFixed(2)}×`;
@@ -975,18 +875,6 @@ ui.rate.addEventListener("dblclick", () => {
 });
 syncRate();
 
-scenes.forEach((s) => {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.textContent = s.name;
-  b.classList.toggle("active", s === scene);
-  b.addEventListener("click", () => {
-    scene = s;
-    [...ui.scenes.children].forEach((c) => c.classList.toggle("active", c === b));
-  });
-  ui.scenes.appendChild(b);
-});
-
 ui.play.addEventListener("click", async () => {
   await ctx.resume();
   if (playing) stopSource();
@@ -1001,13 +889,79 @@ async function loadFile(file) {
   try {
     const buf = await ctx.decodeAudioData(await file.arrayBuffer());
     setBuffer(buf, file.name);
-    ui.title.value = file.name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").slice(0, 60);
-    ui.artist.value = "";
+    trackName = fileBaseName(file.name);
+    trackInfo = describeTrack(file.name.replace(/\.[^.]+$/, ""));
   } catch (e) {
     ui.fileName.textContent = "Fichier illisible. Essaie un mp3, m4a ou wav.";
   }
 }
 ui.file.addEventListener("change", () => loadFile(ui.file.files[0]));
+
+// ---------- Publication TikTok ----------
+// The local server drives a Chromium window (api/tiktok.js); this page sends the
+// exported video, follows the progress and asks for confirmation before posting.
+let lastExport = null;
+const captionInput = $("caption");
+
+// English caption with the song and artist, refilled after each export (editable).
+function defaultCaption() {
+  const { song, artist } = trackInfo;
+  const name = song && artist ? `${song} – ${artist}` : song;
+  return `${name ? `${name} (8D Audio)` : "8D Audio"} 🎧 Put your headphones on for the full 8D experience #8daudio #8d #viral #fyp`;
+}
+
+function tiktokMessage(text, isError) {
+  const el = $("tiktokMsg");
+  el.textContent = text;
+  el.classList.toggle("error", !!isError);
+}
+
+async function tiktokPost(action, body, type) {
+  const res = await fetch(`/api/tiktok/${action}`, {
+    method: "POST",
+    headers: { "X-Orbite": "1", ...(type ? { "Content-Type": type } : {}) },
+    body,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+  return data;
+}
+
+// Polls the server until the job reaches one of the given states.
+async function waitTikTok(states) {
+  for (;;) {
+    const job = await (await fetch("/api/tiktok/status")).json();
+    tiktokMessage(job.message, job.state === "error");
+    if (states.includes(job.state)) return job;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+async function publishToTikTok() {
+  if (!lastExport) return;
+  const btn = $("tiktokBtn");
+  btn.disabled = true;
+  try {
+    tiktokMessage("Envoi de la vidéo au serveur local…");
+    const caption = captionInput.value.trim();
+    await tiktokPost(`prepare?caption=${encodeURIComponent(caption)}`, lastExport, lastExport.type);
+    const job = await waitTikTok(["ready", "error"]);
+    if (job.state === "error") return;
+    const ok = confirm(`La vidéo est prête dans TikTok (regarde la fenêtre Chromium).\n\nLégende : ${caption}\n\nPublier maintenant ?`);
+    if (!ok) {
+      await tiktokPost("cancel");
+      tiktokMessage("Publication annulée : la vidéo n'a pas été publiée.");
+      return;
+    }
+    await tiktokPost("publish");
+    await waitTikTok(["published", "check", "error"]);
+  } catch (e) {
+    tiktokMessage(e.message || "Erreur pendant la publication.", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("tiktokBtn").addEventListener("click", publishToTikTok);
 
 // ---------- Import par lien ----------
 const URL_HINT = "Lien direct audio, Dropbox ou YouTube. YouTube est converti en MP3 par le serveur local.";
@@ -1062,8 +1016,10 @@ async function loadUrl(raw) {
     const ytTitle = isYouTube ? decodeURIComponent(res.headers.get("x-audio-title") || "") : "";
     const name = isYouTube ? ytTitle || "youtube-audio" : decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
     setBuffer(buf, name);
-    ui.title.value = (isYouTube ? name : name.replace(/\.[^.]+$/, "")).replace(/[_]+/g, " ").slice(0, 60);
-    ui.artist.value = "";
+    trackName = isYouTube ? fileBaseName(`${name}.mp3`) : fileBaseName(name);
+    trackInfo = isYouTube
+      ? describeTrack(name, decodeURIComponent(res.headers.get("x-audio-artist") || ""))
+      : describeTrack(name.replace(/\.[^.]+$/, ""));
     urlMessage(URL_HINT);
   } catch (e) {
     urlMessage(e instanceof TypeError
@@ -1095,8 +1051,6 @@ $("urlForm").addEventListener("submit", (e) => {
 ui.drop.addEventListener("drop", (e) => loadFile(e.dataTransfer.files[0]));
 
 // ---------- Boot ----------
-ui.title.value = "Démo Orbite";
-ui.artist.value = "Orbite 8D";
 syncOutputs();
 requestAnimationFrame(frame);
 makeDemo().then((buf) => { if (!buffer) setBuffer(buf, "Son démo chargé"); });
