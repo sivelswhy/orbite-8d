@@ -285,7 +285,7 @@ function computeExcerpt() {
   sel.end = Math.min(Math.max(sel.end, minExcerpt()), total);
   sel.start = Math.max(0, Math.min(sel.start, sel.end - minExcerpt()));
   excerpt = { start: sel.start, length: sel.end - sel.start };
-  ui.start.max = Math.max(0, total - excerpt.length).toFixed(1);
+  ui.start.max = total.toFixed(1);
   ui.start.value = sel.start;
   ui.end.max = total.toFixed(1);
   ui.end.value = sel.end;
@@ -1415,20 +1415,15 @@ function syncOutputs() {
 $("studio").addEventListener("change", applyMix);
 ui.showIntro.addEventListener("change", computeExcerpt);
 
-// Début: with a preset duration the excerpt moves (same length); with a custom
-// one only its start changes. Fin always trims (custom duration).
-bindTimeField(ui.startTime, () => sel.start, (t) => {
-  if (ui.duration.value === "custom" || ui.duration.value === "full") {
-    sel.start = Math.max(0, Math.min(t, sel.end - minExcerpt()));
-    ui.duration.value = "custom";
-  } else {
-    const len = sel.end - sel.start;
-    sel.start = Math.max(0, Math.min(t, buffer.duration - len));
-    sel.end = sel.start + len;
-  }
+// Début and Fin each trim their own edge (custom duration); the other edge
+// stays put. To move the whole excerpt, drag the selection on the waveform.
+function setStart(t) {
+  sel.start = Math.max(0, Math.min(t, sel.end - minExcerpt()));
+  ui.duration.value = "custom";
   computeExcerpt();
   relaunchIfPlaying();
-});
+}
+bindTimeField(ui.startTime, () => sel.start, setStart);
 bindTimeField(ui.endTime, () => sel.end, (t) => {
   sel.end = Math.min(buffer.duration, Math.max(t, sel.start + minExcerpt()));
   ui.duration.value = "custom";
@@ -1437,13 +1432,8 @@ bindTimeField(ui.endTime, () => sel.end, (t) => {
 });
 bindTimeField(ui.posTime, () => +ui.pos.value, seekTo);
 
-// The slider moves the whole selection, keeping its length.
 ui.start.addEventListener("input", () => {
-  const len = sel.end - sel.start;
-  sel.start = +ui.start.value;
-  sel.end = sel.start + len;
-  computeExcerpt();
-  relaunchIfPlaying();
+  if (buffer) setStart(+ui.start.value);
 });
 // The Fin slider trims the end, like the Fin field (custom duration).
 ui.end.addEventListener("input", () => {

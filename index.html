@@ -130,7 +130,9 @@
     </section>
 
     <section class="monitor" aria-label="Aperçu et export">
-      <canvas id="canvas" width="1080" height="1920" aria-label="Aperçu de la vidéo"></canvas>
+      <div class="screen">
+        <canvas id="canvas" width="1080" height="1920" aria-label="Aperçu de la vidéo"></canvas>
+      </div>
       <div class="deck">
         <div class="transport">
           <button id="play" class="secondary">▶ Écouter</button>
@@ -147,9 +149,9 @@
           <label>Légende <input type="text" id="caption" maxlength="2200" /></label>
           <label class="check"><input type="checkbox" id="autoPost" checked /> Publier automatiquement</label>
           <button id="tiktokBtn" class="primary">Publier sur TikTok</button>
-          <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre avec la vidéo et la légende ; la première fois, connecte-toi à TikTok dedans. Décoche « Publier automatiquement » pour cliquer toi-même sur « Publier ».</p>
+          <p class="hint" id="tiktokMsg">S'ouvre dans une fenêtre Chromium (connexion à TikTok la première fois).</p>
         </div>
-        <p class="hint">L'enregistrement se fait en temps réel : garde cet onglet au premier plan. Format : <span id="format"></span>.</p>
+        <p class="hint">Enregistré en temps réel : garde l'onglet au premier plan · <span id="format"></span></p>
       </div>
     </section>
   </main>

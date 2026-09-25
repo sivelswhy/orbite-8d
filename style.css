@@ -47,9 +47,19 @@ body {
 .rack { display: flex; flex-direction: column; gap: var(--space-2xs); min-width: 0; }
 .monitor { order: -1; display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); min-width: 0; }
 
+/* Desktop: the monitor column never gets taller than the window. The preview
+   shrinks to leave room for the export controls; if the window is really too
+   short, the column scrolls on its own. */
 @media (min-width: 60rem) {
   .layout { grid-template-columns: minmax(0, 460px) minmax(0, 1fr); gap: var(--space-lg); padding-top: var(--space-md); }
-  .monitor { order: 0; position: sticky; top: var(--space-sm); align-self: start; }
+  .monitor {
+    order: 0;
+    position: sticky;
+    top: var(--space-sm);
+    align-self: start;
+    max-height: calc(100dvh - 2 * var(--space-sm));
+    overflow-y: auto;
+  }
 }
 
 .module {
@@ -307,6 +317,7 @@ button.lyrics-auto.is-synced { border-color: var(--color-ok); background: var(--
 .lyrics-paste textarea { margin: var(--space-2xs) 0; font: 400 var(--text-sm)/1.45 var(--font-mono); resize: vertical; }
 
 /* ---------- Monitor: preview, transport, export ---------- */
+.screen { display: flex; justify-content: center; width: 100%; }
 #canvas {
   display: block;
   width: min(100%, 280px);
@@ -317,7 +328,10 @@ button.lyrics-auto.is-synced { border-color: var(--color-ok); background: var(--
   background: var(--color-screen);
 }
 @media (min-width: 60rem) {
-  #canvas { width: min(100%, 400px, calc((100dvh - 220px) * 9 / 16)); }
+  .monitor { height: calc(100dvh - 2 * var(--space-sm)); }
+  .screen { flex: 1 1 0; min-height: 240px; }
+  .deck { flex: none; }
+  #canvas { width: auto; max-width: 100%; height: 100%; max-height: 720px; object-fit: contain; }
 }
 
 .deck { display: flex; flex-direction: column; gap: var(--space-xs); width: min(100%, 400px); }
