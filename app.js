@@ -24,9 +24,11 @@ const ui = {
 
 // ---------- Audio graph ----------
 // source ─┬─ lowpass ─────────────────────────────── bass (centre) ─┐
-//         └─ highpass ─┬─ panner (HRTF) ─ gain(intensité) ─┐       ├─ master ─┬─ destination
-//                      └─ gain(1 - intensité) ─────────────┴─ mix ─┤          └─ recDest
-//                                                 mix ─ convolver ─┘
+//         └─ highpass ─┬─ panner (HRTF) ─ gain(intensité) ─┐       ├─ master
+//                      └─ gain(1 - intensité) ─────────────┴─ mix ─┤
+//                                  mix ─ predelay ─ convolver ─ damp ─┘
+// master ─┬─ (dry) ──────────────────────────────────────────────────────┬─ masterOut ─┬─ destination
+//         └─ (studio) EQ ─ compressor ─ makeup ─ limiter ────────────────┘             └─ recDest
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
 const CROSSOVER = 120;
 
@@ -43,6 +45,18 @@ const convolver = new ConvolverNode(ctx, { buffer: makeImpulse(2.8, 2.5) });
 const wetGain = new GainNode(ctx);
 const bassGain = new GainNode(ctx, { gain: 1 });
 const master = new GainNode(ctx, { gain: 0.9 });
+// Studio: pre-delay and darker tail on the reverb, then a mastering chain.
+const predelay = new DelayNode(ctx, { maxDelayTime: 0.1 });
+const damp = new BiquadFilterNode(ctx, { type: "lowpass", frequency: 20000, Q: 0.5 });
+const eqLow = new BiquadFilterNode(ctx, { type: "lowshelf", frequency: 110, gain: 2.5 });
+const eqMud = new BiquadFilterNode(ctx, { type: "peaking", frequency: 320, Q: 1, gain: -2 });
+const eqAir = new BiquadFilterNode(ctx, { type: "highshelf", frequency: 9000, gain: 3 });
+const glue = new DynamicsCompressorNode(ctx, { threshold: -20, knee: 8, ratio: 3, attack: 0.015, release: 0.25 });
+const makeup = new GainNode(ctx, { gain: 1.6 });
+const limiter = new DynamicsCompressorNode(ctx, { threshold: -2, knee: 0, ratio: 20, attack: 0.002, release: 0.08 });
+const dryOut = new GainNode(ctx);
+const studioOut = new GainNode(ctx, { gain: 0 });
+const masterOut = new GainNode(ctx);
 const analyser = new AnalyserNode(ctx, { fftSize: 2048, smoothingTimeConstant: 0.6 });
 const recDest = ctx.createMediaStreamDestination();
 
@@ -50,9 +64,11 @@ lowpass.connect(bassGain).connect(master);
 highpass.connect(panner).connect(pannedGain).connect(mix);
 highpass.connect(centerGain).connect(mix);
 mix.connect(master);
-mix.connect(convolver).connect(wetGain).connect(master);
-master.connect(ctx.destination);
-master.connect(recDest);
+mix.connect(predelay).connect(convolver).connect(damp).connect(wetGain).connect(master);
+master.connect(dryOut).connect(masterOut);
+master.connect(eqLow).connect(eqMud).connect(eqAir).connect(glue).connect(makeup).connect(limiter).connect(studioOut).connect(masterOut);
+masterOut.connect(ctx.destination);
+masterOut.connect(recDest);
 
 function makeImpulse(seconds, decay) {
   const len = Math.floor(ctx.sampleRate * seconds);
@@ -72,6 +88,11 @@ function applyMix() {
   centerGain.gain.setTargetAtTime(1 - k, t, 0.05);
   wetGain.gain.setTargetAtTime(r * 0.8, t, 0.05);
   mix.gain.setTargetAtTime(1 - r * 0.35, t, 0.05);
+  const studio = $("studio").checked;
+  dryOut.gain.setTargetAtTime(studio ? 0 : 1, t, 0.05);
+  studioOut.gain.setTargetAtTime(studio ? 1 : 0, t, 0.05);
+  predelay.delayTime.setTargetAtTime(studio ? 0.03 : 0, t, 0.05);
+  damp.frequency.setTargetAtTime(studio ? 6500 : 20000, t, 0.05);
 }
 
 // ---------- Track state ----------
@@ -242,8 +263,11 @@ let trackInfo = { song: "", artist: "" };
 // when the title has no "Artist - " part (e.g. the YouTube channel name).
 function describeTrack(title, fallbackArtist = "") {
   const clean = (s) => s
-    .replace(/\s*[([][^)\]]*\b(official|video|audio|lyrics?|clip|visuali[sz]er|hd|4k|remaster(ed)?|mv)\b[^)\]]*[)\]]/gi, "")
-    .replace(/_+/g, " ").replace(/\s+/g, " ").trim();
+    .replace(/_+/g, " ")
+    .replace(/\s*[([{][^)\]}]*(?<!\p{L})(official|officiel(le)?|vid[eé]o|audio|lyrics?|paroles?|letra|clip|visuali[sz]er|h[dq]|4k|remaster(ed)?|m\/?v|explicit)(?!\p{L})[^)\]}]*[)\]}]/giu, "")
+    .replace(/\s*[|/]\s*(official|lyrics?|paroles|clip|vid[eé]o).*$/iu, "")
+    .replace(/\s+(\+\s*)?(lyrics?|paroles)$/iu, "")
+    .replace(/\s+/g, " ").trim();
   const m = title.match(/^(.+?)\s+[-–—]\s+(.+)$/);
   if (m) return { artist: clean(m[1]), song: clean(m[2]) };
   const artist = fallbackArtist.replace(/\s*-\s*Topic$/i, "").replace(/\s*VEVO$/i, "");
@@ -1210,6 +1234,7 @@ function syncOutputs() {
   applyMix();
 }
 [ui.speed, ui.intensity, ui.reverb].forEach((el) => el.addEventListener("input", syncOutputs));
+$("studio").addEventListener("change", applyMix);
 ui.showIntro.addEventListener("change", computeExcerpt);
 
 // Début: with a preset duration the excerpt moves (same length); with a custom
