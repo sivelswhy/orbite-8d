@@ -409,6 +409,7 @@ function updateDurationOptions() {
 
 function setBuffer(buf, name) {
   stopSource();
+  clearExport();
   buffer = buf;
   if (playerUrl) URL.revokeObjectURL(playerUrl);
   playerUrl = URL.createObjectURL(bufferToWav(buf));
@@ -754,6 +755,10 @@ const scenes = [
   { id: "istanbul-1", name: "Istanbul 1" },
   { id: "istanbul-2", name: "Istanbul 2" },
   { id: "istanbul-3", name: "Istanbul 3" },
+  { id: "alpes-1", name: "Alpes 1" },
+  { id: "alpes-2", name: "Alpes 2" },
+  { id: "alpes-3", name: "Alpes 3" },
+  { id: "alpes-4", name: "Alpes 4" },
 ];
 const CROSSFADE_MS = 400;
 
@@ -1584,15 +1589,21 @@ function finishExport(blob, extension) {
   $("tiktok").hidden = false;
 }
 
+// Hides the previous video's download link and TikTok panel.
+function clearExport() {
+  if (ui.download.href) URL.revokeObjectURL(ui.download.href);
+  ui.download.removeAttribute("href");
+  ui.download.hidden = true;
+  $("tiktok").hidden = true;
+  lastExport = null;
+}
+
 async function startExport() {
   if (!buffer || recording) return;
   unlockPlayer();
   await ctx.resume();
   await document.fonts.ready;
-  if (ui.download.href) URL.revokeObjectURL(ui.download.href);
-  ui.download.hidden = true;
-  $("tiktok").hidden = true;
-  lastExport = null;
+  clearExport();
   if (encoderConfig) {
     try {
       return await fastExport();
