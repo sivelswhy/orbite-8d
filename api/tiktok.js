@@ -1,8 +1,8 @@
 "use strict";
 
-// Prepares an exported video on TikTok by driving a visible Chromium window:
-// upload + caption, then it stops. The user reviews it and clicks "Post" in
-// TikTok; once TikTok has left the upload page, the window is closed.
+// Posts an exported video on TikTok by driving a visible Chromium window:
+// upload + caption, then either clicks "Post" itself (auto) or waits for the
+// user's click. Once TikTok has left the upload page, the window is closed.
 // The user logs in once in that window; the session is kept in PROFILE_DIR.
 
 const fs = require("fs");
@@ -19,6 +19,8 @@ const SELECTORS = {
   fileInput: 'input[type="file"][accept*="video"]',
   caption: '.public-DraftEditor-content, div[contenteditable="true"]',
   postButton: 'button[data-e2e="post_video_button"]',
+  // Optional second dialog after "Post" (content check, "post anyway"…).
+  postNow: 'div[role="dialog"] button:has-text("Post now"), div[role="dialog"] button:has-text("Publier maintenant")',
 };
 
 const BUSY = new Set(["opening", "login", "uploading", "posting"]);
@@ -103,7 +105,7 @@ async function fail(error) {
   setJob("error", `${error.message}${shot ? ` (capture : ${shot})` : ""}`);
 }
 
-async function prepare(file, caption) {
+async function prepare(file, caption, auto) {
   try {
     setJob("opening", "Ouverture de TikTok…");
     const p = await getPage();
@@ -114,6 +116,7 @@ async function prepare(file, caption) {
     await fillCaption(p, caption);
     setJob("uploading", "TikTok traite la vidéo…");
     await waitPostEnabled(p);
+    if (auto) return await autoPost(p);
     await p.bringToFront();
     setJob("ready", "La vidéo et la légende sont prêtes dans la fenêtre TikTok : vérifie, puis clique toi-même sur « Publier ».");
     closeAfterPost(p);
@@ -122,8 +125,16 @@ async function prepare(file, caption) {
   }
 }
 
-// Waits for the user's own click on "Post", then for TikTok to leave the upload
-// page (= posted), and closes the window. Nothing here clicks "Post".
+// Clicks "Post" (and "Post now" if TikTok asks), then waits for the confirmation.
+async function autoPost(p) {
+  setJob("posting", "Publication en cours sur TikTok…");
+  await p.locator(SELECTORS.postButton).first().click();
+  const postNow = p.locator(SELECTORS.postNow).first();
+  if (await postNow.waitFor({ timeout: 5000 }).then(() => true, () => false)) await postNow.click();
+  await finishPost(p);
+}
+
+// Waits for the user's own click on "Post", then for the confirmation.
 async function closeAfterPost(p) {
   const clicked = await new Promise((resolve) => {
     resolvePostClick = resolve;
@@ -134,6 +145,11 @@ async function closeAfterPost(p) {
   resolvePostClick = null;
   if (!clicked) return;
   setJob("posting", "Publication en cours sur TikTok…");
+  await finishPost(p);
+}
+
+// TikTok leaving the upload page = posted: the window is then closed.
+async function finishPost(p) {
   const posted = await p.waitForURL((u) => !u.pathname.includes("/upload"), { timeout: POST_TIMEOUT }).then(() => true, () => false);
   if (!posted) {
     setJob("check", "Je n'ai pas vu TikTok confirmer la publication : la fenêtre reste ouverte, vérifie.");
@@ -155,8 +171,8 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-// Routes: GET /api/tiktok/status, POST /api/tiktok/prepare. Nothing here posts:
-// publishing is always the user's own click in TikTok.
+// Routes: GET /api/tiktok/status, POST /api/tiktok/prepare?caption=…&auto=1.
+// Without auto=1, posting is left to the user's own click in TikTok.
 // POSTs require the X-Orbite header, so other websites cannot trigger them
 // (a custom header forces a CORS preflight, which this server never approves).
 function tiktok(req, res) {
@@ -169,13 +185,14 @@ function tiktok(req, res) {
   if (action === "prepare") {
     if (BUSY.has(job.state)) return sendJson(res, 409, { message: "Une publication est déjà en cours." });
     const caption = url.searchParams.get("caption") || "";
+    const auto = url.searchParams.get("auto") === "1";
     const ext = (req.headers["content-type"] || "").includes("webm") ? "webm" : "mp4";
     removeVideoFile();
     videoFile = path.join(os.tmpdir(), `orbite-tiktok-${Date.now()}.${ext}`);
     const out = fs.createWriteStream(videoFile);
     req.pipe(out);
     out.on("finish", () => {
-      prepare(videoFile, caption);
+      prepare(videoFile, caption, auto);
       sendJson(res, 202, job);
     });
     out.on("error", (error) => sendJson(res, 500, { message: error.message }));

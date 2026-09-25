@@ -120,8 +120,9 @@
       <a id="download" class="download" hidden>Télécharger la vidéo</a>
       <div class="tiktok" id="tiktok" hidden>
         <label>Légende TikTok <input type="text" id="caption" maxlength="2200" /></label>
-        <button id="tiktokBtn" class="primary">Préparer sur TikTok</button>
-        <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre avec la vidéo et la légende ; la première fois, connecte-toi à TikTok dedans. C'est toi qui cliques sur « Publier ».</p>
+        <label class="check"><input type="checkbox" id="autoPost" checked /> Publier automatiquement</label>
+        <button id="tiktokBtn" class="primary">Publier sur TikTok</button>
+        <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre avec la vidéo et la légende ; la première fois, connecte-toi à TikTok dedans. Décoche « Publier automatiquement » pour cliquer toi-même sur « Publier ».</p>
       </div>
       <p class="hint">L'enregistrement se fait en temps réel : garde cet onglet au premier plan. Format : <span id="format"></span>.</p>
     </section>

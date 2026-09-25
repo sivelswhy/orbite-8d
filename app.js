@@ -1253,7 +1253,8 @@ ui.file.addEventListener("change", () => loadFile(ui.file.files[0]));
 
 // ---------- Publication TikTok ----------
 // The local server drives a Chromium window (api/tiktok.js); this page sends the
-// exported video and follows the progress. Posting is left to the user, in TikTok.
+// exported video and follows the progress. It clicks "Post" itself when "auto" is
+// ticked; otherwise posting is left to the user, in TikTok.
 let lastExport = null;
 const captionInput = $("caption");
 
@@ -1301,10 +1302,11 @@ async function prepareOnTikTok() {
   try {
     tiktokMessage("Envoi de la vidéo au serveur local…");
     const caption = captionInput.value.trim();
-    await tiktokPost(`prepare?caption=${encodeURIComponent(caption)}`, lastExport, lastExport.type);
-    const job = await waitTikTok(["ready", "error"]);
+    const auto = $("autoPost").checked ? "&auto=1" : "";
+    await tiktokPost(`prepare?caption=${encodeURIComponent(caption)}${auto}`, lastExport, lastExport.type);
+    const job = await waitTikTok(["ready", "published", "check", "error", "idle"]);
     btn.disabled = false;
-    // Keep following: the window closes itself once the user has posted.
+    // Manual mode: keep following, the window closes itself once the user has posted.
     if (job.state === "ready") waitTikTok(["published", "check", "error", "idle"]).catch(() => {});
   } catch (e) {
     tiktokMessage(e.message || "Erreur pendant la préparation sur TikTok.", true);

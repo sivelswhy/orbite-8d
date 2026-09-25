@@ -23,7 +23,7 @@ Variables facultatives : `YTDLP_PATH` et `FFMPEG_PATH` (binaires hors du PATH), 
 - **Paroles** : paroles synchronisées cherchées sur [lrclib.net](https://lrclib.net) (titre + artiste), affichées au centre ligne par ligne avec fondu ; décalage réglable, ou paroles LRC collées à la main.
 - **Extrait** : début au choix, 15 s à 3 min, ou morceau entier.
 - **Intro** : carte « Put on your headphones » de 1,5 s avant la musique, avec une icône AirPods Pro (SVG Repo, `assets/airpods.svg`).
-- **TikTok** : après l'export, « Préparer sur TikTok » ouvre un Chromium (Playwright) qui envoie la vidéo et remplit la légende, puis s'arrête : tu cliques toi-même sur « Publier » dans TikTok. Connexion à TikTok faite une fois à la main ; session gardée dans `~/.orbite-8d/tiktok-profile`. Première installation : `npm install && npx playwright install chromium`. Si TikTok change sa page, corrige `SELECTORS` dans `api/tiktok.js`.
+- **TikTok** : après l'export, « Publier sur TikTok » ouvre un Chromium (Playwright) qui envoie la vidéo, remplit la légende et clique sur « Publier » ; la fenêtre se ferme une fois la vidéo publiée. Décoche « Publier automatiquement » pour vérifier et cliquer toi-même. Connexion à TikTok faite une fois à la main ; session gardée dans `~/.orbite-8d/tiktok-profile`. Première installation : `npm install && npx playwright install chromium`. Si TikTok change sa page, corrige `SELECTORS` dans `api/tiktok.js`.
 - **Export** : `canvas.captureStream` + `MediaRecorder`, MP4 si le navigateur le permet (Safari, Chrome récent), sinon WebM. Enregistrement en temps réel, onglet au premier plan.
 
 ## Licence
