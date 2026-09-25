@@ -14,13 +14,36 @@ const ui = {
   showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
   showLyrics: $("showLyrics"), lyricsOffset: $("lyricsOffset"), lyricsOffsetText: $("lyricsOffsetText"),
   lyricsLine: $("lyricsLine"), lyricsNow: $("lyricsNow"),
-  start: $("start"), startTime: $("startTime"), endTime: $("endTime"), duration: $("duration"), excerptInfo: $("excerptInfo"),
+  start: $("start"), end: $("end"), startTime: $("startTime"), endTime: $("endTime"), duration: $("duration"), excerptInfo: $("excerptInfo"),
   rate: $("rate"), rateOut: $("rateOut"), keepPitch: $("keepPitch"),
   pos: $("pos"), posTime: $("posTime"),
   play: $("play"), exportBtn: $("export"), cancel: $("cancel"),
   progress: $("progress"), progressBar: $("progressBar"), progressText: $("progressText"),
   download: $("download"), format: $("format"),
 };
+
+// ---------- Sliders ----------
+// The filled part of each slider is drawn in CSS from --from/--to. Bipolar
+// sliders (data-zero) fill from their neutral value. The value setter is
+// wrapped so sliders moved by code (playback, Sync auto…) repaint too.
+const rangeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+function paintRange(el) {
+  const min = +el.min || 0, max = +el.max || 0;
+  const pct = (v) => `${max > min ? ((Math.min(max, Math.max(min, v)) - min) / (max - min)) * 100 : 0}%`;
+  const v = +rangeValue.get.call(el);
+  const zero = el.dataset.zero === undefined ? min : +el.dataset.zero;
+  el.style.setProperty("--from", pct(Math.min(zero, v)));
+  el.style.setProperty("--to", pct(Math.max(zero, v)));
+}
+document.querySelectorAll('input[type="range"]').forEach((el) => {
+  Object.defineProperty(el, "value", {
+    get: () => rangeValue.get.call(el),
+    set: (v) => { rangeValue.set.call(el, v); paintRange(el); },
+  });
+  el.addEventListener("input", () => paintRange(el));
+  new MutationObserver(() => paintRange(el)).observe(el, { attributes: true, attributeFilter: ["min", "max"] });
+  paintRange(el);
+});
 
 // ---------- Audio graph ----------
 // source ─┬─ lowpass ─────────────────────────────── bass (centre) ─┐
@@ -108,17 +131,34 @@ playerNode.connect(analyser);
 let playerUrl = null;
 let playing = false;
 let angle = 0;
-let playStartCtx = 0; // ctx time when the music starts (after the intro)
-let introLength = 0; // seconds of intro card shown before the music, for the current playback
-let introTimer = null;
+let playStartCtx = 0; // ctx time when the music starts
+let introLength = 0; // seconds of intro card shown over the start of the music, for the current playback
+let introEndCtx = 0; // ctx time when the intro card is gone
 let onExcerptEnd = null;
 let cursor = null; // where "Écouter" resumes (track seconds); null = start of the excerpt
 const INTRO_SECONDS = 1.5;
 let excerpt = { start: 0, length: 30 };
 let sel = { start: 0, end: 30 }; // chosen range in seconds; excerpt is derived from it
 
+// Output fades (40 ms). Muting on stop also cuts the reverb tail, which
+// otherwise keeps ringing like an echo after the music.
+function muteOutput() {
+  const g = masterOut.gain, now = ctx.currentTime;
+  g.cancelScheduledValues(now);
+  g.setValueAtTime(g.value, now);
+  g.linearRampToValueAtTime(0, now + 0.04);
+}
+// Fade-in over the intro on a squared curve (slow start, like a mixer fade),
+// built from short ramps so a Stop in the middle can cancel it cleanly.
+function unmuteOutput(at, duration) {
+  muteOutput();
+  const g = masterOut.gain, d = Math.max(0.04, duration), steps = 12;
+  g.setValueAtTime(0, at);
+  for (let i = 1; i <= steps; i++) g.linearRampToValueAtTime((i / steps) ** 2, at + (d * i) / steps);
+}
+
 function stopSource() {
-  clearTimeout(introTimer);
+  muteOutput();
   player.pause();
   onExcerptEnd = null;
   playing = false;
@@ -139,12 +179,16 @@ function startSource(onEnd, { live = false } = {}) {
     angle = 0;
     restartScenes();
   }
+  // The music starts right away: the intro card sits over its first seconds
+  // while the sound fades in.
   introLength = !live && fromStart && ui.showIntro.checked ? INTRO_SECONDS : 0;
-  playStartCtx = ctx.currentTime + introLength;
+  playStartCtx = ctx.currentTime;
+  introEndCtx = playStartCtx + introLength;
+  unmuteOutput(ctx.currentTime + 0.05, introLength);
   applyRate();
   player.currentTime = from;
   onExcerptEnd = onEnd || (() => {});
-  introTimer = setTimeout(() => player.play().catch(() => {}), introLength * 1000);
+  player.play().catch(() => {});
   playing = true;
   ui.play.textContent = "■ Stop";
   updateLyricsNow();
@@ -243,13 +287,15 @@ function computeExcerpt() {
   excerpt = { start: sel.start, length: sel.end - sel.start };
   ui.start.max = Math.max(0, total - excerpt.length).toFixed(1);
   ui.start.value = sel.start;
+  ui.end.max = total.toFixed(1);
+  ui.end.value = sel.end;
   showTime(ui.startTime, sel.start);
   showTime(ui.endTime, sel.end);
   $("customOpt").textContent = `Personnalisée (${fmt(excerpt.length)})`;
   ui.excerptInfo.textContent =
     `Extrait : ${fmt(excerpt.start)} → ${fmt(excerpt.start + excerpt.length)} sur ${fmt(total)} · ` +
     `vidéo de ${fmt(excerpt.length / rate())}${rate() === 1 ? "" : ` à ${rate().toFixed(2)}×`}` +
-    (ui.showIntro.checked ? ` + ${String(INTRO_SECONDS).replace(".", ",")} s d'intro` : "");
+    (ui.showIntro.checked ? ` · intro de ${String(INTRO_SECONDS).replace(".", ",")} s en fondu au début` : "");
   syncCursor();
   drawWave();
 }
@@ -374,7 +420,37 @@ const waveG = wave.getContext("2d");
 const WAVE_BUCKETS = 800;
 const DB_FLOOR = -60;
 const HANDLE_W = 12; // CSS px
-const HANDLE_COLOR = "#ffd23f";
+// Waveform colours come from tokens.css, so the canvas matches the interface.
+// OKLCH tokens are converted to rgb() so every canvas implementation accepts them.
+function cssToken(name) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const m = v.match(/^oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)\s*\)$/);
+  if (!m) return v;
+  const L = m[1] / 100, C = +m[2], H = (m[3] * Math.PI) / 180;
+  const a = C * Math.cos(H), b = C * Math.sin(H);
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const lin = [
+    4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s,
+  ];
+  const srgb = lin.map((c) => {
+    c = Math.min(1, Math.max(0, c));
+    return Math.round(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055));
+  });
+  return `rgb(${srgb.join(", ")})`;
+}
+const WAVE = {
+  accent: cssToken("--color-accent"),
+  inside: cssToken("--color-ink-2"),
+  outside: cssToken("--color-rule-2"),
+  grid: cssToken("--color-rule"),
+  label: cssToken("--color-muted"),
+  grip: cssToken("--color-paper-0"),
+  head: cssToken("--color-ink"),
+};
 let levels = null;
 
 function computeLevels(buf) {
@@ -410,32 +486,30 @@ function drawWave() {
   const total = buffer.duration;
   const x0 = (excerpt.start / total) * w;
   const x1 = ((excerpt.start + excerpt.length) / total) * w;
-  waveG.fillStyle = "rgba(139, 123, 255, .14)";
+  waveG.globalAlpha = 0.1;
+  waveG.fillStyle = WAVE.accent;
   waveG.fillRect(x0, 0, x1 - x0, h);
+  waveG.globalAlpha = 1;
 
   // dB grid
-  waveG.font = `${10 * dpr}px Outfit, system-ui, sans-serif`;
+  waveG.font = `${10 * dpr}px "Geist Mono", ui-monospace, monospace`;
   waveG.textBaseline = "middle";
   for (const db of [-6, -18, -36]) {
     const r = 1 - db / DB_FLOOR;
     for (const y of [h / 2 - (r * h) / 2, h / 2 + (r * h) / 2]) {
-      waveG.fillStyle = "rgba(255, 255, 255, .06)";
+      waveG.fillStyle = WAVE.grid;
       waveG.fillRect(0, Math.round(y), w, dpr);
     }
-    waveG.fillStyle = "rgba(154, 152, 179, .6)";
+    waveG.fillStyle = WAVE.label;
     waveG.fillText(`${db} dB`, 4 * dpr, h / 2 - (r * h) / 2 + 6 * dpr);
   }
 
   const barW = w / levels.length;
-  const grad = waveG.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, "#3de0d0");
-  grad.addColorStop(0.5, "#8b7bff");
-  grad.addColorStop(1, "#3de0d0");
   for (let i = 0; i < levels.length; i++) {
     const x = i * barW;
     const r = 1 - levels[i] / DB_FLOOR;
     const bh = Math.max(dpr, r * (h - 4 * dpr));
-    waveG.fillStyle = x + barW >= x0 && x <= x1 ? grad : "#3a3a55";
+    waveG.fillStyle = x + barW >= x0 && x <= x1 ? WAVE.inside : WAVE.outside;
     waveG.fillRect(x, (h - bh) / 2, Math.max(dpr, barW - dpr * 0.5), bh);
   }
 
@@ -444,7 +518,7 @@ function drawWave() {
   const border = 3 * dpr;
   const left = Math.max(0, Math.min(x0, w - 2 * hw));
   const right = Math.min(w, Math.max(x1, left + 2 * hw));
-  waveG.fillStyle = HANDLE_COLOR;
+  waveG.fillStyle = WAVE.accent;
   waveG.fillRect(left, 0, right - left, border);
   waveG.fillRect(left, h - border, right - left, border);
   for (const x of [left, right - hw]) {
@@ -452,15 +526,17 @@ function drawWave() {
     if (waveG.roundRect) waveG.roundRect(x, 0, hw, h, 4 * dpr);
     else waveG.rect(x, 0, hw, h);
     waveG.fill();
-    waveG.fillStyle = "rgba(0, 0, 0, .55)";
+    waveG.fillStyle = WAVE.grip;
     waveG.fillRect(x + hw / 2 - dpr, h / 2 - 8 * dpr, 2 * dpr, 16 * dpr);
-    waveG.fillStyle = HANDLE_COLOR;
+    waveG.fillStyle = WAVE.accent;
   }
 
   if (playing || cursor !== null) {
     const t = playing ? playPosition() : cursor;
-    waveG.fillStyle = playing ? "#3de0d0" : "rgba(61,224,208,0.6)";
+    waveG.globalAlpha = playing ? 1 : 0.6;
+    waveG.fillStyle = WAVE.head;
     waveG.fillRect(Math.round((t / total) * w), 0, 2 * dpr, h);
+    waveG.globalAlpha = 1;
   }
 }
 
@@ -883,6 +959,7 @@ function fillLyricsLines() {
   });
   ui.lyricsLine.disabled = !ui.lyricsLine.options.length;
   $("lyricsAuto").disabled = !ui.lyricsLine.options.length || !buffer;
+  markSynced(false);
   updateLyricsNow();
 }
 
@@ -962,7 +1039,10 @@ $("lyricsResults").addEventListener("change", (e) => {
 
 // Offset in seconds added to the playback time: positive = lyrics come earlier.
 const LYRICS_OFFSET_MAX = 60;
-function setLyricsOffset(v) {
+// auto: the offset comes from a successful Sync auto (button turns green);
+// any other change (manual, new lyrics, new track) clears that state.
+function setLyricsOffset(v, { auto = false } = {}) {
+  markSynced(auto);
   v = Math.round(Math.max(-LYRICS_OFFSET_MAX, Math.min(LYRICS_OFFSET_MAX, v)) * 10) / 10;
   ui.lyricsOffset.value = v;
   if (document.activeElement !== ui.lyricsOffsetText) ui.lyricsOffsetText.value = `${v > 0 ? "+" : ""}${v.toFixed(1)} s`;
@@ -1052,6 +1132,12 @@ function estimateLyricsOffset(env, lines) {
   return -fine / SYNC_RATE || 0;
 }
 
+function markSynced(on) {
+  const btn = $("lyricsAuto");
+  btn.classList.toggle("is-synced", on);
+  btn.textContent = on ? "✓ Synchronisé" : "Sync auto";
+}
+
 $("lyricsAuto").addEventListener("click", () => {
   if (!buffer || !lyrics.length) return;
   const offset = estimateLyricsOffset(vocalEnvelope(buffer), lyrics);
@@ -1059,7 +1145,7 @@ $("lyricsAuto").addEventListener("click", () => {
     setLyricsOffset(0);
     lyricsMessage("Sync auto : pas assez sûr sur ce morceau, je garde les temps du LRC. Ajuste à la main si besoin.");
   } else {
-    setLyricsOffset(offset);
+    setLyricsOffset(offset, { auto: true });
     lyricsMessage(offset ? `Sync auto : paroles décalées de ${ui.lyricsOffsetText.value}.` : "Sync auto : les temps du LRC étaient déjà bons.");
   }
 });
@@ -1205,8 +1291,8 @@ function frame(now) {
   const target = readBass();
   bassLevel += (target - bassLevel) * (target > bassLevel ? 0.5 : 0.12);
 
-  const introLeft = playing ? playStartCtx - ctx.currentTime : 0;
-  if (playing && introLeft <= 0) {
+  const introLeft = playing ? introEndCtx - ctx.currentTime : 0;
+  if (playing) {
     angle += (dt * Math.PI * 2) / +ui.speed.value;
     const x = Math.sin(angle), z = -Math.cos(angle), y = 0.15 * Math.sin(angle * 0.5);
     const at = ctx.currentTime;
@@ -1242,10 +1328,6 @@ if (!mime) ui.exportBtn.disabled = true;
 let recording = null;
 
 function updateProgress() {
-  if (ctx.currentTime < playStartCtx) {
-    ui.progressText.textContent = "Enregistrement de l'intro…";
-    return;
-  }
   const done = Math.max(0, player.currentTime - excerpt.start);
   const p = Math.min(1, done / excerpt.length);
   ui.progressBar.style.width = `${(p * 100).toFixed(1)}%`;
@@ -1308,6 +1390,7 @@ function setBusy(busy) {
   $("urlBtn").disabled = busy;
   $("pasteBtn").disabled = busy;
   ui.start.disabled = busy;
+  ui.end.disabled = busy;
   waveWrap.classList.toggle("disabled", busy);
   ui.duration.disabled = busy;
   ui.rate.disabled = busy;
@@ -1359,6 +1442,14 @@ ui.start.addEventListener("input", () => {
   const len = sel.end - sel.start;
   sel.start = +ui.start.value;
   sel.end = sel.start + len;
+  computeExcerpt();
+  relaunchIfPlaying();
+});
+// The Fin slider trims the end, like the Fin field (custom duration).
+ui.end.addEventListener("input", () => {
+  if (!buffer) return;
+  sel.end = Math.min(buffer.duration, Math.max(+ui.end.value, sel.start + minExcerpt()));
+  ui.duration.value = "custom";
   computeExcerpt();
   relaunchIfPlaying();
 });

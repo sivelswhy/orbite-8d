@@ -1,0 +1,51 @@
+/* Orbite 8D · design tokens (console de studio, nuit, LED ambre).
+ * paper: dark · display: grotesk-sans + mono readouts · accent: warm (amber) */
+:root {
+  --color-screen:     oklch(9%  0.004 60);   /* monitor, wells behind the video */
+  --color-paper-0:    oklch(11% 0.006 60);   /* recessed: slider tracks, readouts, inputs */
+  --color-paper:      oklch(14% 0.008 60);   /* page */
+  --color-paper-2:    oklch(18% 0.009 60);   /* module */
+  --color-paper-3:    oklch(23% 0.010 60);   /* keys, raised controls */
+  --color-rule:       oklch(29% 0.010 60);
+  --color-rule-2:     oklch(48% 0.010 60);
+  --color-muted:      oklch(68% 0.012 70);
+  --color-ink-2:      oklch(84% 0.008 70);
+  --color-ink:        oklch(94% 0.006 80);
+  --color-accent:     oklch(80% 0.15 72);    /* amber LED */
+  --color-accent-2:   oklch(70% 0.14 65);    /* amber pressed */
+  --color-accent-ink: oklch(20% 0.03 60);    /* text on amber */
+  --color-accent-low: oklch(34% 0.07 68);    /* LED off / dim amber */
+  --color-focus:      oklch(80% 0.15 72);
+  --color-danger:     oklch(74% 0.15 28);
+  --color-ok:         oklch(78% 0.16 150);   /* green LED: done */
+  --color-ok-low:     oklch(30% 0.06 150);
+
+  --font-body:    "Geist", ui-sans-serif, sans-serif;
+  --font-display: "Geist", ui-sans-serif, sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, monospace;   /* readouts: numbers, times, LRC */
+
+  --text-xs:   0.75rem;
+  --text-sm:   0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md:   1.0625rem;
+  --text-lg:   1.5rem;
+
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs:  0.75rem;
+  --space-sm:  1rem;
+  --space-md:  1.5rem;
+  --space-lg:  2rem;
+  --space-xl:  3rem;
+
+  --radius-control: 4px;
+  --radius-module:  6px;
+  --radius-screen:  10px;
+  --rule: 1px;
+
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+}

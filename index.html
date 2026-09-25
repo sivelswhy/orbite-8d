@@ -7,25 +7,27 @@
   <meta name="description" content="Transforme un morceau en vidéo TikTok 8D prête à publier." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet" />
+  <!-- Geist: interface · Outfit: text drawn in the video (lyrics, intro, logo) -->
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400;500&family=Outfit:wght@600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="top">
-    <h1>Orbite <span>8D</span></h1>
-    <p>Ton morceau tourne autour de la tête, sur un paysage animé. Export 1080×1920 prêt pour TikTok.</p>
+    <h1 class="wordmark">Orbite <span>8D</span></h1>
+    <p>Le son tourne autour de la tête, sur un paysage de nuit. Vidéo 1080×1920 pour TikTok.</p>
   </header>
 
   <main class="layout">
-    <section class="panel">
-      <div class="group">
+    <section class="rack" aria-label="Réglages">
+      <section class="module">
         <h2>Son</h2>
         <label class="drop" id="drop">
           <input type="file" id="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,.mp3,.m4a,.wav" hidden />
           <strong>Dépose un mp3, m4a ou wav</strong>
           <small id="fileName">Son démo chargé</small>
         </label>
-        <label class="url-label" for="url">Importer depuis YouTube ou un lien audio</label>
+        <label class="url-label" for="url">Ou importer depuis YouTube ou un lien audio</label>
         <form class="url-row" id="urlForm">
           <input type="url" id="url" placeholder="Colle ton lien YouTube ici" aria-label="Lien YouTube ou audio" />
           <button type="button" class="secondary small" id="pasteBtn" title="Coller le lien depuis le presse-papiers">Coller</button>
@@ -33,76 +35,15 @@
         </form>
         <p class="hint" id="urlMsg">Lien direct audio, Dropbox ou YouTube. YouTube est converti en MP3 par le serveur local.</p>
         <p class="hint">Les fichiers locaux restent dans ton navigateur. Pour YouTube, seul le téléchargement demandé passe par le serveur.</p>
-      </div>
+      </section>
 
-      <div class="group">
-        <h2>Effet 8D</h2>
-        <label>Vitesse de rotation <output id="speedOut"></output>
-          <input type="range" id="speed" min="2" max="20" step="0.5" value="8" />
-        </label>
-        <label>Intensité <output id="intensityOut"></output>
-          <input type="range" id="intensity" min="0" max="1" step="0.01" value="0.9" />
-        </label>
-        <label>Réverbération <output id="reverbOut"></output>
-          <input type="range" id="reverb" min="0" max="1" step="0.01" value="0.3" />
-        </label>
-        <label class="check"><input type="checkbox" id="studio" checked /> Rendu studio</label>
-        <p class="hint">Égaliseur (basses chaudes, aigus aérés), compression, limiteur et réverbération plus douce.</p>
-      </div>
-
-      <div class="group">
-        <h2>Affichage</h2>
-        <label class="check"><input type="checkbox" id="showHead" /> Schéma de la tête</label>
-        <label class="check"><input type="checkbox" id="showLogo" checked /> Logo 8dsongslive</label>
-        <label class="check"><input type="checkbox" id="showIntro" checked /> Intro « Put on your headphones » (1,5 s)</label>
-      </div>
-
-      <div class="group">
-        <h2>Paroles</h2>
-        <label class="check"><input type="checkbox" id="showLyrics" checked /> Afficher les paroles</label>
-        <p class="hint" id="lyricsMsg">Charge un morceau : les paroles synchronisées sont cherchées automatiquement.</p>
-        <form class="lyrics-search" id="lyricsSearch">
-          <input type="text" id="lyricsQuery" placeholder="Chercher : titre, artiste…" aria-label="Chercher des paroles"
-            autocomplete="off" spellcheck="false" enterkeyhint="search" />
-          <button type="submit" class="secondary small">Chercher</button>
-        </form>
-        <select id="lyricsResults" aria-label="Résultats de la recherche" hidden></select>
-        <label>Décalage <input type="text" class="time" id="lyricsOffsetText" autocomplete="off" spellcheck="false"
-            title="En secondes (ex. +2.5 ou -12) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" />
-          <input type="range" id="lyricsOffset" min="-60" max="60" step="0.1" value="0" title="Double-clic pour revenir à 0" />
-        </label>
-        <button type="button" class="secondary small lyrics-auto" id="lyricsAuto" disabled
-          title="Cale les paroles sur la voix du morceau. Si ce n'est pas assez sûr, les temps du LRC sont gardés.">Sync auto</button>
-        <div class="lyrics-sync">
-          <select id="lyricsLine" aria-label="Ligne de référence"></select>
-          <button type="button" class="secondary small" id="lyricsNow" disabled>C'est maintenant</button>
-        </div>
-        <p class="hint">Paroles en avance ou en retard ? Choisis une ligne, lance l'écoute et clique sur « C'est maintenant » au moment où elle est chantée.</p>
-        <details class="lyrics-paste">
-          <summary>Coller des paroles synchronisées (LRC)</summary>
-          <textarea id="lyricsText" rows="6" placeholder="[00:23.21] You know the rules and so do I"></textarea>
-          <button type="button" class="secondary small" id="lyricsApply">Utiliser ces paroles</button>
-        </details>
-      </div>
-
-      <div class="group">
+      <section class="module">
         <h2>Extrait</h2>
         <div class="wave" id="waveWrap">
           <canvas id="wave" aria-label="Forme d'onde du morceau en décibels, clique pour choisir le début"></canvas>
           <span class="wave-tip" id="waveTip" hidden></span>
         </div>
-        <p class="hint">Tire les poignées jaunes pour choisir le début et la fin, ou glisse la sélection pour la déplacer.</p>
-        <label>Lecture <input type="text" class="time" id="posTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
-          <input type="range" id="pos" min="0" max="1" step="0.01" value="0" />
-        </label>
-        <label>Début <input type="text" class="time" id="startTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
-          <input type="range" id="start" min="0" max="0" step="0.5" value="0" />
-        </label>
-        <label>Fin <input type="text" class="time" id="endTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" /></label>
-        <label>Vitesse <output id="rateOut"></output>
-          <input type="range" id="rate" min="0.5" max="1.5" step="0.01" value="1" title="Double-clic pour revenir à 1×" />
-        </label>
-        <label class="check"><input type="checkbox" id="keepPitch" checked /> Garder la tonalité (comme TikTok)</label>
+        <p class="hint">Tire les poignées pour choisir le début et la fin, ou glisse la sélection pour la déplacer.</p>
         <label>Durée
           <select id="duration">
             <option value="15">15 s</option>
@@ -115,30 +56,101 @@
             <option value="custom" id="customOpt" hidden>Personnalisée</option>
           </select>
         </label>
+        <label>Lecture <input type="text" class="time" id="posTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
+          <input type="range" id="pos" min="0" max="1" step="0.01" value="0" />
+        </label>
+        <label>Début <input type="text" class="time" id="startTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
+          <input type="range" id="start" min="0" max="0" step="0.5" value="0" />
+        </label>
+        <label>Fin <input type="text" class="time" id="endTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
+          <input type="range" id="end" min="0" max="0" step="0.5" value="0" />
+        </label>
         <p class="hint" id="excerptInfo"></p>
-      </div>
 
-      <div class="actions">
-        <button id="play" class="secondary">▶ Écouter</button>
-        <button id="export" class="primary">Exporter la vidéo</button>
-      </div>
-      <div class="progress" id="progress" hidden>
-        <div class="bar"><div id="progressBar"></div></div>
-        <p id="progressText"></p>
-        <button id="cancel" class="secondary small">Annuler</button>
-      </div>
-      <a id="download" class="download" hidden>Télécharger la vidéo</a>
-      <div class="tiktok" id="tiktok" hidden>
-        <label>Légende TikTok <input type="text" id="caption" maxlength="2200" /></label>
-        <label class="check"><input type="checkbox" id="autoPost" checked /> Publier automatiquement</label>
-        <button id="tiktokBtn" class="primary">Publier sur TikTok</button>
-        <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre avec la vidéo et la légende ; la première fois, connecte-toi à TikTok dedans. Décoche « Publier automatiquement » pour cliquer toi-même sur « Publier ».</p>
-      </div>
-      <p class="hint">L'enregistrement se fait en temps réel : garde cet onglet au premier plan. Format : <span id="format"></span>.</p>
+        <h3 class="sub">Vitesse</h3>
+        <label>Vitesse <output id="rateOut"></output>
+          <input type="range" id="rate" class="bipolar" data-zero="1" min="0.5" max="1.5" step="0.01" value="1" title="Double-clic pour revenir à 1×" />
+        </label>
+        <label class="check"><input type="checkbox" id="keepPitch" checked /> Garder la tonalité (comme TikTok)</label>
+      </section>
+
+      <section class="module">
+        <h2>Effet 8D</h2>
+        <label>Vitesse de rotation <output id="speedOut"></output>
+          <input type="range" id="speed" min="2" max="20" step="0.5" value="8" />
+        </label>
+        <label>Intensité <output id="intensityOut"></output>
+          <input type="range" id="intensity" min="0" max="1" step="0.01" value="0.9" />
+        </label>
+        <label>Réverbération <output id="reverbOut"></output>
+          <input type="range" id="reverb" min="0" max="1" step="0.01" value="0.3" />
+        </label>
+        <label class="check"><input type="checkbox" id="studio" checked /> Rendu studio</label>
+        <p class="hint">Égaliseur (basses chaudes, aigus aérés), compression, limiteur et réverbération plus douce.</p>
+      </section>
+
+      <section class="module">
+        <h2>Paroles</h2>
+        <label class="check"><input type="checkbox" id="showLyrics" checked /> Afficher les paroles</label>
+        <p class="hint" id="lyricsMsg">Charge un morceau : les paroles synchronisées sont cherchées automatiquement.</p>
+
+        <h3 class="sub">Recherche</h3>
+        <form class="lyrics-search" id="lyricsSearch">
+          <input type="text" id="lyricsQuery" placeholder="Titre, artiste…" aria-label="Chercher des paroles"
+            autocomplete="off" spellcheck="false" enterkeyhint="search" />
+          <button type="submit" class="secondary small">Chercher</button>
+        </form>
+        <select id="lyricsResults" aria-label="Résultats de la recherche" hidden></select>
+        <details class="lyrics-paste">
+          <summary>Coller des paroles synchronisées (LRC)</summary>
+          <textarea id="lyricsText" rows="6" placeholder="[00:23.21] You know the rules and so do I"></textarea>
+          <button type="button" class="secondary small" id="lyricsApply">Utiliser ces paroles</button>
+        </details>
+
+        <h3 class="sub">Synchronisation</h3>
+        <label>Décalage <input type="text" class="time" id="lyricsOffsetText" autocomplete="off" spellcheck="false"
+            title="En secondes (ex. +2.5 ou -12) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" />
+          <input type="range" id="lyricsOffset" class="bipolar" data-zero="0" min="-60" max="60" step="0.1" value="0" title="Double-clic pour revenir à 0" />
+        </label>
+        <button type="button" class="secondary small lyrics-auto" id="lyricsAuto" disabled
+          title="Cale les paroles sur la voix du morceau. Si ce n'est pas assez sûr, les temps du LRC sont gardés.">Sync auto</button>
+        <div class="lyrics-sync">
+          <select id="lyricsLine" aria-label="Ligne de référence"></select>
+          <button type="button" class="secondary small" id="lyricsNow" disabled>C'est maintenant</button>
+        </div>
+        <p class="hint">Encore décalé ? Choisis une ligne, lance l'écoute et clique sur « C'est maintenant » au moment où elle est chantée.</p>
+      </section>
+
+      <section class="module">
+        <h2>Affichage</h2>
+        <label class="check"><input type="checkbox" id="showHead" /> Schéma de la tête</label>
+        <label class="check"><input type="checkbox" id="showLogo" checked /> Logo 8dsongslive</label>
+        <label class="check"><input type="checkbox" id="showIntro" checked /> Intro « Put on your headphones » (1,5 s, le son monte en fondu)</label>
+      </section>
     </section>
 
-    <section class="stage">
-      <canvas id="canvas" width="1080" height="1920"></canvas>
+    <section class="monitor" aria-label="Aperçu et export">
+      <canvas id="canvas" width="1080" height="1920" aria-label="Aperçu de la vidéo"></canvas>
+      <div class="deck">
+        <div class="transport">
+          <button id="play" class="secondary">▶ Écouter</button>
+          <button id="export" class="primary">Exporter la vidéo</button>
+        </div>
+        <div class="progress" id="progress" hidden>
+          <div class="bar"><div id="progressBar"></div></div>
+          <p id="progressText"></p>
+          <button id="cancel" class="secondary small">Annuler</button>
+        </div>
+        <a id="download" class="download" hidden>Télécharger la vidéo</a>
+        <div class="tiktok" id="tiktok" hidden>
+          <h3 class="sub">TikTok</h3>
+          <label>Légende <input type="text" id="caption" maxlength="2200" /></label>
+          <label class="check"><input type="checkbox" id="autoPost" checked /> Publier automatiquement</label>
+          <button id="tiktokBtn" class="primary">Publier sur TikTok</button>
+          <p class="hint" id="tiktokMsg">Une fenêtre Chromium s'ouvre avec la vidéo et la légende ; la première fois, connecte-toi à TikTok dedans. Décoche « Publier automatiquement » pour cliquer toi-même sur « Publier ».</p>
+        </div>
+        <p class="hint">L'enregistrement se fait en temps réel : garde cet onglet au premier plan. Format : <span id="format"></span>.</p>
+      </div>
     </section>
   </main>
 
