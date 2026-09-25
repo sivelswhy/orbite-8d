@@ -882,6 +882,7 @@ function fillLyricsLines() {
     ui.lyricsLine.appendChild(o);
   });
   ui.lyricsLine.disabled = !ui.lyricsLine.options.length;
+  $("lyricsAuto").disabled = !ui.lyricsLine.options.length || !buffer;
   updateLyricsNow();
 }
 
@@ -968,6 +969,100 @@ function setLyricsOffset(v) {
 }
 ui.lyricsOffset.addEventListener("input", () => setLyricsOffset(+ui.lyricsOffset.value));
 ui.lyricsOffset.addEventListener("dblclick", () => setLyricsOffset(0));
+
+// ---------- Sync auto ----------
+// Finds the global offset that best lines up the LRC lines with the voice.
+// Voice ≈ energy in the 300 Hz–3 kHz band that sits in the centre of the mix
+// (mid minus side), 10 frames per second. Each LRC line is "sung" from its
+// time to the next line (6 s max); every shift within ±60 s is scored by how
+// much louder the voice is inside those spans than outside, then refined within
+// ±1 s on the voice attacks at line starts. If the best shift is weak or not
+// clearly ahead of another one, the LRC times are kept.
+const SYNC_RATE = 10;
+const SYNC_MIN_SCORE = 0.35; // voice inside vs outside the lines, in standard deviations
+const SYNC_MIN_LEAD = 0.1; // the best shift must beat any other (> 2 s away) by 10 %
+const vocalEnvelopes = new WeakMap();
+
+function vocalEnvelope(buf) {
+  if (vocalEnvelopes.has(buf)) return vocalEnvelopes.get(buf);
+  const L = buf.getChannelData(0);
+  const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+  const hop = Math.round(buf.sampleRate / SYNC_RATE);
+  const n = Math.floor(L.length / hop);
+  const aHp = Math.exp((-2 * Math.PI * 300) / buf.sampleRate);
+  const aLp = 1 - Math.exp((-2 * Math.PI * 3000) / buf.sampleRate);
+  let mh = 0, mx = 0, ml = 0, sh = 0, sx = 0, sl = 0;
+  const raw = new Float32Array(n);
+  for (let f = 0; f < n; f++) {
+    let em = 0, es = 0;
+    for (let i = f * hop, end = i + hop; i < end; i++) {
+      const m = (L[i] + R[i]) * 0.5, s = (L[i] - R[i]) * 0.5;
+      mh = aHp * (mh + m - mx); mx = m; ml += aLp * (mh - ml); em += ml * ml;
+      sh = aHp * (sh + s - sx); sx = s; sl += aLp * (sh - sl); es += sl * sl;
+    }
+    raw[f] = Math.log10(1e-9 + Math.max(0, em - es) / hop);
+  }
+  const env = raw.map((_, f) => (raw[Math.max(0, f - 1)] + raw[f] + raw[Math.min(n - 1, f + 1)]) / 3);
+  vocalEnvelopes.set(buf, env);
+  return env;
+}
+
+// Returns the offset for the "Décalage" field, or null if unsure.
+function estimateLyricsOffset(env, lines) {
+  const n = env.length;
+  const prefix = new Float64Array(n + 1);
+  let sum = 0, sq = 0;
+  env.forEach((v, i) => { prefix[i + 1] = prefix[i] + v; sum += v; sq += v * v; });
+  const std = Math.sqrt(Math.max(1e-12, sq / n - (sum / n) ** 2));
+  const spans = [];
+  lines.forEach((l, i) => {
+    if (!l.text) return;
+    const end = Math.min(lines[i + 1] ? lines[i + 1].t : l.t + 6, l.t + 6);
+    if (end > l.t) spans.push([Math.round(l.t * SYNC_RATE), Math.round(end * SYNC_RATE)]);
+  });
+  const total = spans.reduce((a, [s, e]) => a + e - s, 0);
+  if (spans.length < 4 || !total) return null;
+
+  const max = LYRICS_OFFSET_MAX * SYNC_RATE;
+  const scores = new Float64Array(2 * max + 1).fill(-Infinity);
+  for (let d = -max; d <= max; d++) {
+    let inSum = 0, inCount = 0;
+    for (const [s, e] of spans) {
+      const a = Math.max(0, s + d), b = Math.min(n, e + d);
+      if (b > a) { inSum += prefix[b] - prefix[a]; inCount += b - a; }
+    }
+    if (inCount < total * 0.6 || inCount >= n) continue; // lines pushed out of the track
+    scores[d + max] = (inSum / inCount - (sum - inSum) / (n - inCount)) / std;
+  }
+  let best = 0;
+  scores.forEach((s, i) => { if (s > scores[best]) best = i; });
+  let rival = -Infinity;
+  scores.forEach((s, i) => { if (Math.abs(i - best) > 2 * SYNC_RATE) rival = Math.max(rival, s); });
+  const top = scores[best];
+  if (!(top >= SYNC_MIN_SCORE) || top - rival < top * SYNC_MIN_LEAD) return null;
+
+  const rise = (f) => (f > 0 && f < n ? Math.max(0, env[f] - env[f - 1]) : 0);
+  let fine = best - max, fineScore = -1;
+  for (let d = best - max - SYNC_RATE; d <= best - max + SYNC_RATE; d++) {
+    let s = 0;
+    for (const [start] of spans) s += rise(start + d) + rise(start + d + 1);
+    if (s > fineScore) { fineScore = s; fine = d; }
+  }
+  // Lines at t + d match the voice; the offset is added to the playback time.
+  return -fine / SYNC_RATE || 0;
+}
+
+$("lyricsAuto").addEventListener("click", () => {
+  if (!buffer || !lyrics.length) return;
+  const offset = estimateLyricsOffset(vocalEnvelope(buffer), lyrics);
+  if (offset === null) {
+    setLyricsOffset(0);
+    lyricsMessage("Sync auto : pas assez sûr sur ce morceau, je garde les temps du LRC. Ajuste à la main si besoin.");
+  } else {
+    setLyricsOffset(offset);
+    lyricsMessage(offset ? `Sync auto : paroles décalées de ${ui.lyricsOffsetText.value}.` : "Sync auto : les temps du LRC étaient déjà bons.");
+  }
+});
 
 // Typed as "+2.5", "-12" or "3,5 s"; Enter applies, Escape reverts, arrows nudge.
 const offsetField = ui.lyricsOffsetText;

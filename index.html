@@ -71,6 +71,8 @@
             title="En secondes (ex. +2.5 ou -12) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" />
           <input type="range" id="lyricsOffset" min="-60" max="60" step="0.1" value="0" title="Double-clic pour revenir à 0" />
         </label>
+        <button type="button" class="secondary small lyrics-auto" id="lyricsAuto" disabled
+          title="Cale les paroles sur la voix du morceau. Si ce n'est pas assez sûr, les temps du LRC sont gardés.">Sync auto</button>
         <div class="lyrics-sync">
           <select id="lyricsLine" aria-label="Ligne de référence"></select>
           <button type="button" class="secondary small" id="lyricsNow" disabled>C'est maintenant</button>
