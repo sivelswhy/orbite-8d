@@ -408,6 +408,9 @@ function setBuffer(buf, name) {
   ui.fileName.textContent = name;
   levels = computeLevels(buf);
   applyPreset();
+  $("chorusMsg").textContent = "";
+  goToChorus();
+  autoSel = { ...sel };
 }
 
 // ---------- Waveform (dB) ----------
@@ -945,6 +948,8 @@ function setLyrics(lines, message) {
   lyrics = lines;
   if (message) lyricsMessage(message);
   fillLyricsLines();
+  // Lyrics arrived after the track: refine the chorus if the user hasn't moved the excerpt.
+  if (lines.length && autoSel && sel.start === autoSel.start && sel.end === autoSel.end) goToChorus({ lyricsOnly: true });
 }
 
 // Reference lines for "C'est maintenant" (non-empty lines, with their time).
@@ -1149,6 +1154,188 @@ $("lyricsAuto").addEventListener("click", () => {
     lyricsMessage(offset ? `Sync auto : paroles décalées de ${ui.lyricsOffsetText.value}.` : "Sync auto : les temps du LRC étaient déjà bons.");
   }
 });
+
+// ---------- Refrain ----------
+// Places the excerpt on the chorus, like Instagram's "best moment".
+// 1. Lyrics (when synced lyrics are loaded): the chorus is the lines that come
+//    back; the excerpt starts where a block of repeated lines begins and is
+//    filled with as many repeated lines as possible.
+// 2. Audio otherwise: every 0.5 s, which notes sound (chroma) and how loud it
+//    is. A passage scores high when it comes back elsewhere in the track and
+//    is loud; the start is then nudged onto the nearest rise in energy.
+// If neither is confident, the excerpt stays at the start of the track.
+const CHORUS_RATE = 2; // analysis frames per second
+const CHORUS_PREROLL = 0.5; // start a little before, not to clip the attack
+const chorusFeatures = new WeakMap();
+let autoSel = null; // selection placed automatically; lyrics may refine it while untouched
+
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr;
+        cr = nr;
+      }
+    }
+  }
+}
+
+// Per 0.5 s frame: a zero-mean, unit-length 12-note chroma, and the level in dB.
+function audioFeatures(buf) {
+  if (chorusFeatures.has(buf)) return chorusFeatures.get(buf);
+  const L = buf.getChannelData(0);
+  const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+  const down = Math.max(1, Math.round(buf.sampleRate / 11025));
+  const rate = buf.sampleRate / down;
+  const mono = new Float32Array(Math.floor(L.length / down));
+  for (let i = 0; i < mono.length; i++) {
+    let s = 0;
+    for (let k = i * down; k < (i + 1) * down; k++) s += L[k] + R[k];
+    mono[i] = s / (2 * down);
+  }
+  const N = 2048, sub = 2; // two FFTs per frame
+  const hop = Math.round(rate / CHORUS_RATE);
+  const n = Math.floor(mono.length / hop);
+  const pcOfBin = new Int8Array(N / 2).fill(-1);
+  for (let k = 1; k < N / 2; k++) {
+    const f = (k * rate) / N;
+    if (f >= 80 && f <= 4000) pcOfBin[k] = (((Math.round(12 * Math.log2(f / 440)) + 69) % 12) + 12) % 12;
+  }
+  const hann = Float64Array.from({ length: N }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N));
+  const chroma = new Float32Array(n * 12);
+  const energy = new Float32Array(n);
+  const re = new Float64Array(N), im = new Float64Array(N);
+  for (let f = 0; f < n; f++) {
+    let sq = 0;
+    for (let i = f * hop; i < (f + 1) * hop; i++) sq += mono[i] * mono[i];
+    energy[f] = 10 * Math.log10(1e-10 + sq / hop);
+    const c = chroma.subarray(f * 12, f * 12 + 12);
+    for (let s = 0; s < sub; s++) {
+      const at = f * hop + Math.floor((s * hop) / sub);
+      for (let i = 0; i < N; i++) { re[i] = (mono[at + i] || 0) * hann[i]; im[i] = 0; }
+      fft(re, im);
+      for (let k = 1; k < N / 2; k++) if (pcOfBin[k] >= 0) c[pcOfBin[k]] += Math.hypot(re[k], im[k]);
+    }
+    let mean = 0;
+    for (let p = 0; p < 12; p++) mean += c[p] / 12;
+    let norm = 0;
+    for (let p = 0; p < 12; p++) { c[p] -= mean; norm += c[p] * c[p]; }
+    norm = Math.sqrt(norm) || 1;
+    for (let p = 0; p < 12; p++) c[p] /= norm;
+  }
+  const features = { chroma, energy, n };
+  chorusFeatures.set(buf, features);
+  return features;
+}
+
+// Values spread over [0, 1] between the 5th and 95th percentiles.
+function spread(values) {
+  const sorted = Float32Array.from(values).sort();
+  const lo = sorted[Math.floor(sorted.length * 0.05)], hi = sorted[Math.floor(sorted.length * 0.95)];
+  return values.map((v) => Math.min(1, Math.max(0, (v - lo) / (hi - lo || 1))));
+}
+
+// Start (track seconds) of the chorus, or null if unsure. The search window is
+// the core of a chorus (12 s at most), whatever the excerpt length: the excerpt
+// then starts there.
+function chorusFromAudio(buf, len) {
+  const { chroma, energy, n } = audioFeatures(buf);
+  const w = Math.round(Math.min(len, 12) * CHORUS_RATE);
+  const last = n - Math.round(len * CHORUS_RATE); // latest start that still fits the whole excerpt
+  if (last < 0 || n < w + 16) return null;
+  const sim = (i, j) => {
+    let d = 0;
+    for (let p = 0; p < 12; p++) d += chroma[i * 12 + p] * chroma[j * 12 + p];
+    return d;
+  };
+  // Repetition: best average similarity over 4 s with the same passage elsewhere (≥ 8 s away).
+  const span = 4 * CHORUS_RATE, minLag = 8 * CHORUS_RATE;
+  const rep = new Float32Array(n).fill(-1);
+  const prefix = new Float64Array(n + 1);
+  for (let lag = minLag; lag < n - span; lag++) {
+    for (let j = 0; j < n - lag; j++) prefix[j + 1] = prefix[j] + sim(j, j + lag);
+    for (let j = 0; j + span <= n - lag; j++) {
+      const v = (prefix[j + span] - prefix[j]) / span;
+      for (const f of [j, j + lag]) if (v > rep[f]) rep[f] = v;
+    }
+  }
+  const r = spread(rep), e = spread(energy);
+  const frame = Float32Array.from(r, (v, i) => 0.5 * v + 0.5 * e[i]);
+  const acc = new Float64Array(n + 1);
+  frame.forEach((v, i) => { acc[i + 1] = acc[i] + v; });
+  const windowScore = (s) => (acc[s + w] - acc[s]) / w;
+  const scores = [];
+  let best = 0;
+  for (let s = 0; s <= last; s++) {
+    scores.push(windowScore(s));
+    if (scores[s] > scores[best]) best = s;
+  }
+  const median = [...scores].sort((a, b) => a - b)[Math.floor(scores.length / 2)];
+  if (scores[best] - median < 0.1) return null;
+  // Nudge onto the nearest entrance: the frame within ±4 s where the level jumps most.
+  const mean = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += e[i]; return s / (b - a); };
+  let start = best, top = -Infinity;
+  for (let s = Math.max(4, best - 8); s <= Math.min(last, best + 8); s++) {
+    const v = windowScore(s) + 0.5 * (mean(s, s + 4) - mean(s - 4, s));
+    if (v > top) { top = v; start = s; }
+  }
+  return start / CHORUS_RATE;
+}
+
+// Start (track seconds) of the chorus from synced lyrics, or null.
+function chorusFromLyrics(lines, len, offset, total) {
+  const norm = (t) => t.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N} ]/gu, "").replace(/\s+/g, " ").trim();
+  const sung = lines.filter((l) => l.text).map((l) => ({ t: l.t - offset, key: norm(l.text) }));
+  const count = new Map();
+  for (const l of sung) if (l.key.split(" ").length >= 2) count.set(l.key, (count.get(l.key) || 0) + 1);
+  const repeated = sung.map((l) => (count.get(l.key) || 0) >= 2);
+  if (new Set(sung.filter((_, i) => repeated[i]).map((l) => l.key)).size < 2) return null;
+  let best = null, bestScore = 0;
+  sung.forEach((l, i) => {
+    if (!repeated[i] || (i > 0 && repeated[i - 1] && l.t - sung[i - 1].t < 8)) return; // block starts only
+    if (l.t - CHORUS_PREROLL + len > total) return; // the whole excerpt must fit after it
+    let score = 0;
+    for (let k = i; k < sung.length && sung[k].t < l.t + len; k++) if (repeated[k]) score++;
+    if (score > bestScore) { bestScore = score; best = l.t; }
+  });
+  return bestScore >= 3 ? best : null;
+}
+
+// Moves the excerpt (current length) onto the chorus. Returns true if found.
+function goToChorus({ lyricsOnly = false } = {}) {
+  if (!buffer || ui.duration.value === "full") return false;
+  const total = buffer.duration;
+  const len = Math.min(sel.end - sel.start || +ui.duration.value || 30, total);
+  let t = lyrics.length ? chorusFromLyrics(lyrics, len, +ui.lyricsOffset.value, total) : null;
+  let source = "paroles";
+  if (t === null && !lyricsOnly) { t = chorusFromAudio(buffer, len); source = "son"; }
+  const msg = $("chorusMsg");
+  if (t === null) {
+    if (!lyricsOnly) msg.textContent = "Refrain pas trouvé avec assez de certitude : extrait laissé au début.";
+    return false;
+  }
+  const start = Math.max(0, Math.min(t - CHORUS_PREROLL, total - len));
+  sel = { start, end: start + len };
+  computeExcerpt();
+  relaunchIfPlaying();
+  autoSel = { ...sel };
+  msg.textContent = `Refrain à ${fmt(start)} (d'après le ${source}).`;
+  return true;
+}
+$("chorusBtn").addEventListener("click", () => goToChorus());
 
 // Typed as "+2.5", "-12" or "3,5 s"; Enter applies, Escape reverts, arrows nudge.
 const offsetField = ui.lyricsOffsetText;

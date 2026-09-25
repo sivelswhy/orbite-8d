@@ -20,7 +20,7 @@ Si YouTube ne marche plus, `brew upgrade yt-dlp` règle le problème en généra
 ## Utilisation
 
 1. Charger un morceau : fichier, lien direct, Dropbox ou YouTube.
-2. Régler le 8D (vitesse, intensité, réverb) et choisir l'extrait.
+2. Régler le 8D (vitesse, intensité, réverb) et choisir l'extrait. Il se place tout seul sur le refrain (d'après les paroles, sinon d'après le son), et le bouton « Aller au refrain » relance la recherche.
 3. Les paroles sont trouvées toutes seules sur lrclib.net. Sinon on peut les chercher à la main ou coller un fichier LRC, et corriger le décalage (le bouton « Sync auto » essaie de le trouver tout seul).
 4. Exporter. L'enregistrement se fait en temps réel, il faut garder l'onglet ouvert devant.
 5. Publier sur TikTok : une fenêtre Chromium s'ouvre, envoie la vidéo avec la légende et publie. La première fois il faut se connecter à TikTok dans cette fenêtre.

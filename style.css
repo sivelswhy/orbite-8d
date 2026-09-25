@@ -302,6 +302,9 @@ button.small { padding: var(--space-3xs) var(--space-xs); font-size: var(--text-
   white-space: nowrap;
 }
 
+.chorus-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2xs) var(--space-xs); margin-bottom: var(--space-2xs); }
+.chorus-row .hint { margin: 0; }
+
 /* ---------- Lyrics ---------- */
 .lyrics-search { display: flex; gap: var(--space-2xs); margin-bottom: var(--space-2xs); }
 .lyrics-search input { flex: 1; min-width: 0; margin-top: 0; }

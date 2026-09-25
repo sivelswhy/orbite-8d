@@ -65,6 +65,10 @@
         <label>Fin <input type="text" class="time" id="endTime" title="Tape un temps (1:23.4 ou 83.4) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" autocomplete="off" spellcheck="false" />
           <input type="range" id="end" min="0" max="0" step="0.5" value="0" />
         </label>
+        <div class="chorus-row">
+          <button type="button" class="secondary small" id="chorusBtn">Aller au refrain</button>
+          <span class="hint" id="chorusMsg"></span>
+        </div>
         <p class="hint" id="excerptInfo"></p>
 
         <h3 class="sub">Vitesse</h3>
@@ -72,21 +76,6 @@
           <input type="range" id="rate" class="bipolar" data-zero="1" min="0.5" max="1.5" step="0.01" value="1" title="Double-clic pour revenir à 1×" />
         </label>
         <label class="check"><input type="checkbox" id="keepPitch" checked /> Garder la tonalité (comme TikTok)</label>
-      </section>
-
-      <section class="module">
-        <h2>Effet 8D</h2>
-        <label>Vitesse de rotation <output id="speedOut"></output>
-          <input type="range" id="speed" min="2" max="20" step="0.5" value="8" />
-        </label>
-        <label>Intensité <output id="intensityOut"></output>
-          <input type="range" id="intensity" min="0" max="1" step="0.01" value="0.9" />
-        </label>
-        <label>Réverbération <output id="reverbOut"></output>
-          <input type="range" id="reverb" min="0" max="1" step="0.01" value="0.3" />
-        </label>
-        <label class="check"><input type="checkbox" id="studio" checked /> Rendu studio</label>
-        <p class="hint">Égaliseur (basses chaudes, aigus aérés), compression, limiteur et réverbération plus douce.</p>
       </section>
 
       <section class="module">
@@ -119,6 +108,21 @@
           <button type="button" class="secondary small" id="lyricsNow" disabled>C'est maintenant</button>
         </div>
         <p class="hint">Encore décalé ? Choisis une ligne, lance l'écoute et clique sur « C'est maintenant » au moment où elle est chantée.</p>
+      </section>
+
+      <section class="module">
+        <h2>Effet 8D</h2>
+        <label>Vitesse de rotation <output id="speedOut"></output>
+          <input type="range" id="speed" min="2" max="20" step="0.5" value="8" />
+        </label>
+        <label>Intensité <output id="intensityOut"></output>
+          <input type="range" id="intensity" min="0" max="1" step="0.01" value="0.9" />
+        </label>
+        <label>Réverbération <output id="reverbOut"></output>
+          <input type="range" id="reverb" min="0" max="1" step="0.01" value="0.3" />
+        </label>
+        <label class="check"><input type="checkbox" id="studio" checked /> Rendu studio</label>
+        <p class="hint">Égaliseur (basses chaudes, aigus aérés), compression, limiteur et réverbération plus douce.</p>
       </section>
 
       <section class="module">
