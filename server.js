@@ -5,6 +5,7 @@ const path = require("path");
 const http = require("http");
 const youtubeAudio = require("./api/youtube-audio");
 const tiktok = require("./api/tiktok");
+const exportRoute = require("./api/export");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 8000);
@@ -19,6 +20,7 @@ const contentTypes = {
 http.createServer((req, res) => {
   if (req.url.startsWith("/api/youtube-audio")) return youtubeAudio(req, res);
   if (req.url.startsWith("/api/tiktok/")) return tiktok(req, res);
+  if (req.url.startsWith("/api/export/")) return exportRoute(req, res);
 
   const requested = decodeURIComponent(req.url.split("?")[0]);
   const relative = requested === "/" ? "/index.html" : requested;

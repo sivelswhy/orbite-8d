@@ -54,43 +54,53 @@ document.querySelectorAll('input[type="range"]').forEach((el) => {
 //         └─ (studio) EQ ─ compressor ─ makeup ─ limiter ────────────────┘             └─ recDest
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
 const CROSSOVER = 120;
+const impulse = makeImpulse(2.8, 2.5);
 
-const lowpass = new BiquadFilterNode(ctx, { type: "lowpass", frequency: CROSSOVER, Q: 0.7 });
-const highpass = new BiquadFilterNode(ctx, { type: "highpass", frequency: CROSSOVER, Q: 0.7 });
-const panner = new PannerNode(ctx, {
-  panningModel: "HRTF", distanceModel: "inverse", refDistance: 1, rolloffFactor: 0,
-  channelCount: 1, channelCountMode: "explicit",
-});
-const pannedGain = new GainNode(ctx);
-const centerGain = new GainNode(ctx);
-const mix = new GainNode(ctx);
-const convolver = new ConvolverNode(ctx, { buffer: makeImpulse(2.8, 2.5) });
-const wetGain = new GainNode(ctx);
-const bassGain = new GainNode(ctx, { gain: 1 });
-const master = new GainNode(ctx, { gain: 0.9 });
-// Studio: pre-delay and darker tail on the reverb, then a mastering chain.
-const predelay = new DelayNode(ctx, { maxDelayTime: 0.1 });
-const damp = new BiquadFilterNode(ctx, { type: "lowpass", frequency: 20000, Q: 0.5 });
-const eqLow = new BiquadFilterNode(ctx, { type: "lowshelf", frequency: 110, gain: 2.5 });
-const eqMud = new BiquadFilterNode(ctx, { type: "peaking", frequency: 320, Q: 1, gain: -2 });
-const eqAir = new BiquadFilterNode(ctx, { type: "highshelf", frequency: 9000, gain: 3 });
-const glue = new DynamicsCompressorNode(ctx, { threshold: -20, knee: 8, ratio: 3, attack: 0.015, release: 0.25 });
-const makeup = new GainNode(ctx, { gain: 1.6 });
-const limiter = new DynamicsCompressorNode(ctx, { threshold: -2, knee: 0, ratio: 20, attack: 0.002, release: 0.08 });
-const dryOut = new GainNode(ctx);
-const studioOut = new GainNode(ctx, { gain: 0 });
-const masterOut = new GainNode(ctx);
+// Builds the chain in any context: the live one, or an OfflineAudioContext for the fast export.
+function buildChain(ac) {
+  const n = {
+    lowpass: new BiquadFilterNode(ac, { type: "lowpass", frequency: CROSSOVER, Q: 0.7 }),
+    highpass: new BiquadFilterNode(ac, { type: "highpass", frequency: CROSSOVER, Q: 0.7 }),
+    panner: new PannerNode(ac, {
+      panningModel: "HRTF", distanceModel: "inverse", refDistance: 1, rolloffFactor: 0,
+      channelCount: 1, channelCountMode: "explicit",
+    }),
+    pannedGain: new GainNode(ac),
+    centerGain: new GainNode(ac),
+    mix: new GainNode(ac),
+    convolver: new ConvolverNode(ac, { buffer: impulse }),
+    wetGain: new GainNode(ac),
+    bassGain: new GainNode(ac, { gain: 1 }),
+    master: new GainNode(ac, { gain: 0.9 }),
+    // Studio: pre-delay and darker tail on the reverb, then a mastering chain.
+    predelay: new DelayNode(ac, { maxDelayTime: 0.1 }),
+    damp: new BiquadFilterNode(ac, { type: "lowpass", frequency: 20000, Q: 0.5 }),
+    eqLow: new BiquadFilterNode(ac, { type: "lowshelf", frequency: 110, gain: 2.5 }),
+    eqMud: new BiquadFilterNode(ac, { type: "peaking", frequency: 320, Q: 1, gain: -2 }),
+    eqAir: new BiquadFilterNode(ac, { type: "highshelf", frequency: 9000, gain: 3 }),
+    glue: new DynamicsCompressorNode(ac, { threshold: -20, knee: 8, ratio: 3, attack: 0.015, release: 0.25 }),
+    makeup: new GainNode(ac, { gain: 1.6 }),
+    limiter: new DynamicsCompressorNode(ac, { threshold: -2, knee: 0, ratio: 20, attack: 0.002, release: 0.08 }),
+    dryOut: new GainNode(ac),
+    studioOut: new GainNode(ac, { gain: 0 }),
+    masterOut: new GainNode(ac),
+  };
+  n.lowpass.connect(n.bassGain).connect(n.master);
+  n.highpass.connect(n.panner).connect(n.pannedGain).connect(n.mix);
+  n.highpass.connect(n.centerGain).connect(n.mix);
+  n.mix.connect(n.master);
+  n.mix.connect(n.predelay).connect(n.convolver).connect(n.damp).connect(n.wetGain).connect(n.master);
+  n.master.connect(n.dryOut).connect(n.masterOut);
+  n.master.connect(n.eqLow).connect(n.eqMud).connect(n.eqAir).connect(n.glue).connect(n.makeup).connect(n.limiter)
+    .connect(n.studioOut).connect(n.masterOut);
+  n.masterOut.connect(ac.destination);
+  return n;
+}
+
+const chain = buildChain(ctx);
+const { lowpass, highpass, panner, masterOut } = chain;
 const analyser = new AnalyserNode(ctx, { fftSize: 2048, smoothingTimeConstant: 0.6 });
 const recDest = ctx.createMediaStreamDestination();
-
-lowpass.connect(bassGain).connect(master);
-highpass.connect(panner).connect(pannedGain).connect(mix);
-highpass.connect(centerGain).connect(mix);
-mix.connect(master);
-mix.connect(predelay).connect(convolver).connect(damp).connect(wetGain).connect(master);
-master.connect(dryOut).connect(masterOut);
-master.connect(eqLow).connect(eqMud).connect(eqAir).connect(glue).connect(makeup).connect(limiter).connect(studioOut).connect(masterOut);
-masterOut.connect(ctx.destination);
 masterOut.connect(recDest);
 
 function makeImpulse(seconds, decay) {
@@ -103,19 +113,21 @@ function makeImpulse(seconds, decay) {
   return buf;
 }
 
-function applyMix() {
+// Sets the sliders' mix on a chain; tau > 0 glides there (live), 0 sets it at once (export).
+function applyMix(n = chain, tau = 0.05) {
   const k = +ui.intensity.value;
   const r = +ui.reverb.value;
-  const t = ctx.currentTime;
-  pannedGain.gain.setTargetAtTime(k, t, 0.05);
-  centerGain.gain.setTargetAtTime(1 - k, t, 0.05);
-  wetGain.gain.setTargetAtTime(r * 0.8, t, 0.05);
-  mix.gain.setTargetAtTime(1 - r * 0.35, t, 0.05);
   const studio = $("studio").checked;
-  dryOut.gain.setTargetAtTime(studio ? 0 : 1, t, 0.05);
-  studioOut.gain.setTargetAtTime(studio ? 1 : 0, t, 0.05);
-  predelay.delayTime.setTargetAtTime(studio ? 0.03 : 0, t, 0.05);
-  damp.frequency.setTargetAtTime(studio ? 6500 : 20000, t, 0.05);
+  const t = n.master.context.currentTime;
+  const set = (param, v) => (tau ? param.setTargetAtTime(v, t, tau) : param.setValueAtTime(v, 0));
+  set(n.pannedGain.gain, k);
+  set(n.centerGain.gain, 1 - k);
+  set(n.wetGain.gain, r * 0.8);
+  set(n.mix.gain, 1 - r * 0.35);
+  set(n.dryOut.gain, studio ? 0 : 1);
+  set(n.studioOut.gain, studio ? 1 : 0);
+  set(n.predelay.delayTime, studio ? 0.03 : 0);
+  set(n.damp.frequency, studio ? 6500 : 20000);
 }
 
 // ---------- Track state ----------
@@ -152,7 +164,10 @@ function muteOutput() {
 // built from short ramps so a Stop in the middle can cancel it cleanly.
 function unmuteOutput(at, duration) {
   muteOutput();
-  const g = masterOut.gain, d = Math.max(0.04, duration), steps = 12;
+  fadeIn(masterOut.gain, at, duration);
+}
+function fadeIn(g, at, duration) {
+  const d = Math.max(0.04, duration), steps = 12;
   g.setValueAtTime(0, at);
   for (let i = 1; i <= steps; i++) g.linearRampToValueAtTime((i / steps) ** 2, at + (d * i) / steps);
 }
@@ -803,7 +818,7 @@ function restartScenes() {
 }
 
 function drawVideo(v, bass, alpha) {
-  if (v.readyState < 2) return;
+  if (v instanceof HTMLVideoElement && v.readyState < 2) return;
   // Videos are exactly 1080×1920: at rest they are drawn 1:1 (sharpest); only the bass pump zooms.
   const zoom = 1 + bass * 0.03;
   const w = W * zoom, h = H * zoom;
@@ -813,16 +828,23 @@ function drawVideo(v, bass, alpha) {
   g.globalAlpha = 1;
 }
 
-// Video full-frame with a slight bass "pump", darkened a little for the overlay.
+// Live background: the current clip, and the previous one fading out on top.
 function drawScene(bass) {
+  let k = 0;
+  if (fading) {
+    k = 1 - (performance.now() - fading.start) / CROSSFADE_MS;
+    if (k <= 0) { fading.video.pause(); fading = null; }
+  }
+  drawBackground(sceneVideo(current), fading && fading.video, k, bass);
+}
+
+// Video full-frame with a slight bass "pump", darkened a little for the overlay.
+// src/prev are <video> elements live, VideoFrames in the fast export.
+function drawBackground(src, prev, prevAlpha, bass) {
   g.fillStyle = "#000";
   g.fillRect(0, 0, W, H);
-  drawVideo(sceneVideo(current), bass, 1);
-  if (fading) {
-    const k = 1 - (performance.now() - fading.start) / CROSSFADE_MS;
-    if (k > 0) drawVideo(fading.video, bass, k);
-    else { fading.video.pause(); fading = null; }
-  }
+  if (src) drawVideo(src, bass, 1);
+  if (prev && prevAlpha > 0) drawVideo(prev, bass, prevAlpha);
   const shade = g.createLinearGradient(0, 0, 0, H);
   shade.addColorStop(0, "rgba(0,0,0,0.25)");
   shade.addColorStop(0.5, "rgba(0,0,0,0.05)");
@@ -1387,9 +1409,10 @@ function wrapText(text, maxW) {
   return lines;
 }
 
-function drawLyrics() {
-  if (!ui.showLyrics.checked || !lyrics.length || !playing || ctx.currentTime < playStartCtx) return;
-  const now = playPosition() + +ui.lyricsOffset.value;
+// pos: track time being heard, or null when nothing plays.
+function drawLyrics(pos) {
+  if (pos === null || !ui.showLyrics.checked || !lyrics.length) return;
+  const now = pos + +ui.lyricsOffset.value;
   let i = -1;
   while (i + 1 < lyrics.length && lyrics[i + 1].t <= now) i++;
   if (i < 0 || !lyrics[i].text) return;
@@ -1421,9 +1444,9 @@ function drawLyrics() {
   g.restore();
 }
 
-function drawOverlay(bass) {
+function drawOverlay(bass, pos) {
   if (ui.showLogo.checked) drawLogo(W - 100, 100);
-  drawLyrics();
+  drawLyrics(pos);
   g.textAlign = "center";
   g.textBaseline = "middle";
 
@@ -1472,6 +1495,10 @@ function readBass() {
 }
 
 function frame(now) {
+  if (recording && recording.fast) { // the fast export draws on the canvas itself
+    lastFrame = now;
+    return requestAnimationFrame(frame);
+  }
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
 
@@ -1489,7 +1516,7 @@ function frame(now) {
   }
 
   drawScene(bassLevel);
-  drawOverlay(bassLevel);
+  drawOverlay(bassLevel, playing && ctx.currentTime >= playStartCtx ? playPosition() : null);
   if (introLength && introLeft > 0) drawIntro(introLength - introLeft, introLength);
   checkExcerptEnd();
   if (recording) updateProgress();
@@ -1497,6 +1524,12 @@ function frame(now) {
 }
 
 // ---------- Export ----------
+// Fast export (WebCodecs): the sound is rendered offline, the background clips
+// are decoded frame by frame and each frame is encoded as soon as it is drawn,
+// so it runs as fast as the machine allows. The local server (api/export.js)
+// stretches the tempo when the pitch is kept and muxes the MP4 with ffmpeg.
+// Browsers without WebCodecs, or a failure on the way, fall back to recording
+// the canvas in real time with MediaRecorder.
 const MIME_CANDIDATES = [
   "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
   "video/mp4;codecs=avc1,mp4a",
@@ -1509,16 +1542,46 @@ const mime = window.MediaRecorder
   ? MIME_CANDIDATES.find((m) => MediaRecorder.isTypeSupported(m)) || ""
   : "";
 const ext = mime.startsWith("video/mp4") ? "mp4" : "webm";
-ui.format.textContent = mime ? `${ext.toUpperCase()} 1080×1920` : "export non pris en charge par ce navigateur";
-if (!mime) ui.exportBtn.disabled = true;
+const FPS = 30;
+const MP4BOX_URL = "https://cdn.jsdelivr.net/npm/mp4box@0.5.3/dist/mp4box.all.min.js";
+const AVC_CODECS = ["avc1.640028", "avc1.4d0028", "avc1.42002a"]; // High, Main, Baseline (level 4+ fits 1080×1920)
 
 let recording = null;
+let encoderConfig = null; // set when the fast export is available
+
+(async () => {
+  if (window.VideoEncoder && window.VideoDecoder && window.VideoFrame && window.OfflineAudioContext) {
+    for (const codec of AVC_CODECS) {
+      const config = { codec, width: W, height: H, bitrate: 16_000_000, framerate: FPS };
+      const { supported } = await VideoEncoder.isConfigSupported(config).catch(() => ({}));
+      if (supported) { encoderConfig = config; break; }
+    }
+  }
+  ui.format.textContent = encoderConfig || mime
+    ? `${encoderConfig ? "MP4" : ext.toUpperCase()} 1080×1920`
+    : "export non pris en charge par ce navigateur";
+  $("exportMode").textContent = encoderConfig
+    ? "Rendu accéléré, plus rapide que la durée de la vidéo"
+    : "Enregistré en temps réel : garde l'onglet au premier plan";
+  ui.exportBtn.disabled = !encoderConfig && !mime;
+})();
 
 function updateProgress() {
   const done = Math.max(0, player.currentTime - excerpt.start);
   const p = Math.min(1, done / excerpt.length);
   ui.progressBar.style.width = `${(p * 100).toFixed(1)}%`;
   ui.progressText.textContent = `Enregistrement… ${fmt(done / rate())} / ${fmt(excerpt.length / rate())}`;
+}
+
+function finishExport(blob, extension) {
+  const base = trackName.replace(/[^\p{L}\p{N}\- ]/gu, "").trim().replace(/\s+/g, "-");
+  ui.download.href = URL.createObjectURL(blob);
+  ui.download.download = `${base}-8d.${extension}`;
+  ui.download.textContent = `Télécharger la vidéo (${(blob.size / 1e6).toFixed(1)} Mo)`;
+  ui.download.hidden = false;
+  lastExport = blob;
+  captionInput.value = defaultCaption();
+  $("tiktok").hidden = false;
 }
 
 async function startExport() {
@@ -1530,7 +1593,22 @@ async function startExport() {
   ui.download.hidden = true;
   $("tiktok").hidden = true;
   lastExport = null;
+  if (encoderConfig) {
+    try {
+      return await fastExport();
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      console.warn("Fast export failed, recording in real time instead", e);
+      if (!mime) {
+        $("exportMode").textContent = `Export impossible : ${e.message}`;
+        return;
+      }
+    }
+  }
+  realtimeExport();
+}
 
+function realtimeExport() {
   const stream = new MediaStream([
     ...canvas.captureStream(30).getVideoTracks(),
     ...recDest.stream.getAudioTracks(),
@@ -1544,16 +1622,7 @@ async function startExport() {
     const cancelled = recording.cancelled;
     recording = null;
     setBusy(false);
-    if (cancelled) return;
-    const blob = new Blob(chunks, { type: mime.split(";")[0] });
-    const base = trackName.replace(/[^\p{L}\p{N}\- ]/gu, "").trim().replace(/\s+/g, "-");
-    ui.download.href = URL.createObjectURL(blob);
-    ui.download.download = `${base}-8d.${ext}`;
-    ui.download.textContent = `Télécharger la vidéo (${(blob.size / 1e6).toFixed(1)} Mo)`;
-    ui.download.hidden = false;
-    lastExport = blob;
-    captionInput.value = defaultCaption();
-    $("tiktok").hidden = false;
+    if (!cancelled) finishExport(new Blob(chunks, { type: mime.split(";")[0] }), ext);
   };
 
   setBusy(true);
@@ -1564,8 +1633,327 @@ async function startExport() {
 function cancelExport() {
   if (!recording) return;
   recording.cancelled = true;
+  if (recording.fast) return recording.abort.abort();
   stopSource();
   if (recording.rec.state !== "inactive") recording.rec.stop();
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(`${src} introuvable`));
+    document.head.appendChild(s);
+  });
+}
+
+async function postExport(path, body, signal) {
+  const res = await fetch(path, { method: "POST", body, signal });
+  if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+  return res;
+}
+
+// Decodes a background clip, frame by frame in display order, a few frames ahead.
+class ClipReader {
+  static async open(id, signal) {
+    if (!window.MP4Box) {
+      await loadScript(MP4BOX_URL);
+      Log.setLogLevel(Log.error);
+    }
+    const data = await (await fetch(`assets/videos/${id}.mp4`, { signal })).arrayBuffer();
+    const file = MP4Box.createFile();
+    let track = null;
+    const samples = [];
+    file.onReady = (info) => {
+      track = info.videoTracks[0];
+      file.setExtractionOptions(track.id, null, { nbSamples: Infinity });
+      file.start();
+    };
+    file.onSamples = (_, __, list) => samples.push(...list);
+    data.fileStart = 0;
+    file.appendBuffer(data); // parsing is synchronous: everything is ready after flush()
+    file.flush();
+    if (!track) throw new Error(`${id}.mp4 illisible`);
+    const avcC = file.getTrackById(track.id).mdia.minf.stbl.stsd.entries[0].avcC;
+    const stream = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
+    avcC.write(stream);
+    return new ClipReader(track, samples, new Uint8Array(stream.buffer, 8)); // without the box header
+  }
+
+  constructor(track, samples, description) {
+    this.samples = samples;
+    this.fed = 0;
+    this.frames = [];
+    this.flushed = false;
+    this.error = null;
+    this.wake = null;
+    this.decoder = new VideoDecoder({
+      output: (f) => { this.frames.push(f); this.wake?.(); },
+      error: (e) => { this.error = e; this.wake?.(); },
+    });
+    this.decoder.configure({ codec: track.codec, codedWidth: track.video.width, codedHeight: track.video.height, description });
+  }
+
+  // Next frame (the caller closes it), or null at the end of the clip.
+  async next() {
+    while (!this.frames.length) {
+      if (this.error) throw this.error;
+      if (this.fed < this.samples.length) {
+        while (this.fed < this.samples.length && this.decoder.decodeQueueSize < 8) {
+          const s = this.samples[this.fed++];
+          this.decoder.decode(new EncodedVideoChunk({
+            type: s.is_sync ? "key" : "delta",
+            timestamp: (1e6 * s.cts) / s.timescale,
+            duration: (1e6 * s.duration) / s.timescale,
+            data: s.data,
+          }));
+        }
+        // The decoder may hold frames back to reorder them: wait for one, or feed more.
+        await new Promise((resolve) => { this.wake = resolve; setTimeout(resolve, 4); });
+      } else if (!this.flushed) {
+        this.flushed = true;
+        await this.decoder.flush();
+      } else {
+        return null;
+      }
+    }
+    return this.frames.shift();
+  }
+
+  close() {
+    this.frames.forEach((f) => f.close());
+    this.frames = [];
+    if (this.decoder.state !== "closed") this.decoder.close();
+  }
+}
+
+// Endless random order of clips, never the same twice in a row (like nextRandomScene).
+function clipOrder() {
+  let queue = [], last = null;
+  return () => {
+    if (!queue.length) {
+      queue = shuffle(scenes);
+      if (queue[0] === last) queue.push(queue.shift());
+    }
+    return (last = queue.shift()).id;
+  };
+}
+
+function sliceBuffer(buf, start, length) {
+  const from = Math.floor(start * buf.sampleRate);
+  const frames = Math.max(1, Math.min(buf.length - from, Math.ceil(length * buf.sampleRate)));
+  const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: frames, sampleRate: buf.sampleRate });
+  for (let c = 0; c < buf.numberOfChannels; c++) out.copyToChannel(buf.getChannelData(c).subarray(from, from + frames), c);
+  return out;
+}
+
+// The excerpt as it is heard: the source buffer and its playback rate. With
+// "Garder la tonalité", ffmpeg changes the tempo and the result plays at 1×.
+async function exportSource(signal) {
+  const src = sliceBuffer(buffer, excerpt.start, excerpt.length);
+  const r = rate();
+  if (r === 1 || !ui.keepPitch.checked) return { src, srcRate: r };
+  const res = await postExport(`/api/export/stretch?rate=${r}`, bufferToWav(src), signal);
+  return { src: await ctx.decodeAudioData(await res.arrayBuffer()), srcRate: 1 };
+}
+
+// The same chain as the live one, with the rotation and the intro fade-in scheduled up front.
+function renderExportAudio(src, srcRate, total, introLen) {
+  const sr = ctx.sampleRate;
+  const off = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
+  const n = buildChain(off);
+  applyMix(n, 0);
+  const source = new AudioBufferSourceNode(off, { buffer: src, playbackRate: srcRate });
+  source.connect(n.lowpass);
+  source.connect(n.highpass);
+  const steps = Math.max(2, Math.ceil(total * 200));
+  const x = new Float32Array(steps), y = new Float32Array(steps), z = new Float32Array(steps);
+  for (let i = 0; i < steps; i++) {
+    const a = (((i / (steps - 1)) * total) * Math.PI * 2) / +ui.speed.value;
+    x[i] = Math.sin(a); y[i] = 0.15 * Math.sin(a * 0.5); z[i] = -Math.cos(a);
+  }
+  n.panner.positionX.setValueCurveAtTime(x, 0, total);
+  n.panner.positionY.setValueCurveAtTime(y, 0, total);
+  n.panner.positionZ.setValueCurveAtTime(z, 0, total);
+  fadeIn(n.masterOut.gain, 0, introLen);
+  source.start(0);
+  return off.startRendering();
+}
+
+// Bass level for each video frame, as readBass() and the smoothing in frame()
+// compute it live at 60 fps from the analyser (2048-point Blackman FFT, bins under 150 Hz).
+function exportBassLevels(src, srcRate, nFrames) {
+  const N = 2048, sr = src.sampleRate, STEP = 60;
+  const L = src.getChannelData(0), R = src.numberOfChannels > 1 ? src.getChannelData(1) : L;
+  const maxBin = Math.max(2, Math.floor(150 / (sr / N)));
+  const win = Float32Array.from({ length: N }, (_, i) =>
+    0.42 - 0.5 * Math.cos((2 * Math.PI * i) / N) + 0.08 * Math.cos((4 * Math.PI * i) / N));
+  const cos = [], sin = [];
+  for (let k = 0; k <= maxBin; k++) {
+    cos[k] = Float32Array.from({ length: N }, (_, i) => Math.cos((2 * Math.PI * k * i) / N));
+    sin[k] = Float32Array.from({ length: N }, (_, i) => Math.sin((2 * Math.PI * k * i) / N));
+  }
+  const frame = new Float32Array(N);
+  const smooth = new Float64Array(maxBin + 1);
+  const levels = new Float32Array(nFrames);
+  let level = 0;
+  const steps = Math.ceil((nFrames / FPS) * STEP);
+  for (let j = 0, f = 0; j <= steps && f < nFrames; j++) {
+    const end = Math.floor((j / STEP) * srcRate * sr);
+    for (let i = 0; i < N; i++) {
+      const at = end - N + i;
+      frame[i] = at >= 0 && at < L.length ? ((L[at] + R[at]) / 2) * win[i] : 0;
+    }
+    let sum = 0;
+    for (let k = 1; k <= maxBin; k++) {
+      let re = 0, im = 0;
+      for (let i = 0; i < N; i++) { re += frame[i] * cos[k][i]; im -= frame[i] * sin[k][i]; }
+      smooth[k] = 0.6 * smooth[k] + 0.4 * (Math.hypot(re, im) / N);
+      const db = 20 * Math.log10(smooth[k] || 1e-12);
+      sum += Math.max(0, Math.min(255, Math.floor((255 * (db + 100)) / 70)));
+    }
+    const target = Math.min(1, Math.max(0, (sum / maxBin / 255 - 0.35) / 0.55));
+    level += (target - level) * (target > level ? 0.5 : 0.12);
+    while (f < nFrames && f / FPS <= j / STEP) levels[f++] = level;
+  }
+  return levels;
+}
+
+// Length-prefixed NAL units (WebCodecs "avc") to Annex B, with SPS/PPS before each key frame.
+function avcToAnnexB(avcC) {
+  const lengthSize = (avcC[4] & 3) + 1;
+  const params = [];
+  let p = 5;
+  const readSets = (count) => {
+    for (let i = 0; i < count; i++) {
+      const len = (avcC[p] << 8) | avcC[p + 1];
+      params.push(avcC.slice(p + 2, p + 2 + len));
+      p += 2 + len;
+    }
+  };
+  readSets(avcC[p++] & 31); // SPS
+  readSets(avcC[p++]); // PPS
+  return (data, key) => {
+    const nals = key ? [...params] : [];
+    for (let i = 0; i < data.length;) {
+      let len = 0;
+      for (let k = 0; k < lengthSize; k++) len = len * 256 + data[i + k];
+      nals.push(data.subarray(i + lengthSize, i + lengthSize + len));
+      i += lengthSize + len;
+    }
+    const out = new Uint8Array(nals.reduce((n, nal) => n + 4 + nal.length, 0));
+    let o = 0;
+    for (const nal of nals) {
+      out[o + 3] = 1; // 00 00 00 01
+      out.set(nal, o + 4);
+      o += 4 + nal.length;
+    }
+    return out;
+  };
+}
+
+const yieldToPage = () => new Promise((resolve) => setTimeout(resolve));
+
+async function fastExport() {
+  const abort = new AbortController();
+  const { signal } = abort;
+  const r = rate();
+  const total = excerpt.length / r;
+  const nFrames = Math.max(1, Math.round(total * FPS));
+  const introLen = ui.showIntro.checked ? INTRO_SECONDS : 0;
+  const readers = [];
+  let encoder = null, cur = null, prev = null, upcoming = null;
+
+  stopSource();
+  computeExcerpt();
+  current?.video?.pause();
+  recording = { fast: true, cancelled: false, abort };
+  setBusy(true);
+  const progress = (p, text) => {
+    ui.progressBar.style.width = `${(p * 100).toFixed(1)}%`;
+    ui.progressText.textContent = text;
+  };
+  try {
+    progress(0, "Préparation du son…");
+    const { src, srcRate } = await exportSource(signal);
+    const audioDone = renderExportAudio(src, srcRate, total, introLen);
+    const bass = exportBassLevels(src, srcRate, nFrames);
+
+    const chunks = [];
+    let toAnnexB = null, encodeError = null;
+    encoder = new VideoEncoder({
+      output: (chunk, meta) => {
+        if (meta?.decoderConfig?.description) toAnnexB = avcToAnnexB(new Uint8Array(meta.decoderConfig.description));
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        chunks.push(toAnnexB(data, chunk.type === "key"));
+      },
+      error: (e) => { encodeError = e; },
+    });
+    encoder.configure({ ...encoderConfig, avc: { format: "avc" } });
+
+    const nextClip = clipOrder();
+    let reader = await ClipReader.open(nextClip(), signal);
+    upcoming = ClipReader.open(nextClip(), signal);
+    readers.push(reader);
+    let prevStart = 0;
+    for (let i = 0; i < nFrames; i++) {
+      if (signal.aborted) throw new DOMException("Export annulé", "AbortError");
+      if (encodeError) throw encodeError;
+      const t = i / FPS;
+      let f = await reader.next();
+      if (!f) { // clip over: its last frame fades out over the next clip
+        prev?.close();
+        prev = cur;
+        cur = null;
+        prevStart = t;
+        reader.close();
+        reader = await upcoming;
+        readers.push(reader);
+        upcoming = ClipReader.open(nextClip(), signal);
+        f = await reader.next();
+      }
+      cur?.close();
+      cur = f;
+      let fade = prev ? 1 - ((t - prevStart) * 1000) / CROSSFADE_MS : 0;
+      if (prev && fade <= 0) { prev.close(); prev = null; fade = 0; }
+
+      angle = (t * Math.PI * 2) / +ui.speed.value;
+      drawBackground(cur, prev, fade, bass[i]);
+      drawOverlay(bass[i], excerpt.start + t * r);
+      if (introLen && t < introLen) drawIntro(t, introLen);
+      const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
+      encoder.encode(frame, { keyFrame: i % (FPS * 2) === 0 });
+      frame.close();
+      while (encoder.encodeQueueSize > 4) await yieldToPage();
+      if (i % 5 === 0) {
+        progress((0.9 * i) / nFrames, `Rendu de la vidéo… ${Math.round((100 * i) / nFrames)} %`);
+        await yieldToPage();
+      }
+    }
+    await encoder.flush();
+    if (encodeError) throw encodeError;
+
+    progress(0.92, "Assemblage du MP4…");
+    const audio = await audioDone;
+    const wav = bufferToWav(audio);
+    const header = new DataView(new ArrayBuffer(4));
+    header.setUint32(0, wav.size, true);
+    const res = await postExport("/api/export/mux", new Blob([header, wav, ...chunks]), signal);
+    const blob = new Blob([await res.arrayBuffer()], { type: "video/mp4" });
+    if (signal.aborted) throw new DOMException("Export annulé", "AbortError");
+    finishExport(blob, "mp4");
+  } finally {
+    cur?.close();
+    prev?.close();
+    readers.forEach((rd) => rd.close());
+    upcoming?.then((rd) => rd.close(), () => {});
+    if (encoder && encoder.state !== "closed") encoder.close();
+    recording = null;
+    setBusy(false);
+    current?.video?.play().catch(() => {});
+  }
 }
 
 function setBusy(busy) {
@@ -1586,7 +1974,7 @@ function setBusy(busy) {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (recording && document.hidden) {
+  if (recording && !recording.fast && document.hidden) {
     ui.progressText.textContent = "Onglet en arrière-plan : la vidéo risque de figer. Reviens ici.";
   }
 });
@@ -1599,7 +1987,7 @@ function syncOutputs() {
   applyMix();
 }
 [ui.speed, ui.intensity, ui.reverb].forEach((el) => el.addEventListener("input", syncOutputs));
-$("studio").addEventListener("change", applyMix);
+$("studio").addEventListener("change", () => applyMix());
 ui.showIntro.addEventListener("change", computeExcerpt);
 
 // Début and Fin each trim their own edge (custom duration); the other edge
