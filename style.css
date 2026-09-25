@@ -152,6 +152,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .download[hidden] { display: none; }
 .tiktok { display: flex; flex-direction: column; gap: 8px; }
 
+.lyrics-search { display: flex; gap: 8px; margin-bottom: 8px; }
+.lyrics-search input { flex: 1; min-width: 0; margin-top: 0; }
+#lyricsResults { margin: 0 0 8px; }
+#lyricsResults[hidden] { display: none; }
 .lyrics-sync { display: flex; gap: 8px; margin-bottom: 4px; }
 .lyrics-sync select { flex: 1; min-width: 0; margin-top: 0; }
 

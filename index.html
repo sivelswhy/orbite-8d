@@ -59,6 +59,12 @@
         <h2>Paroles</h2>
         <label class="check"><input type="checkbox" id="showLyrics" checked /> Afficher les paroles</label>
         <p class="hint" id="lyricsMsg">Charge un morceau : les paroles synchronisées sont cherchées automatiquement.</p>
+        <form class="lyrics-search" id="lyricsSearch">
+          <input type="text" id="lyricsQuery" placeholder="Chercher : titre, artiste…" aria-label="Chercher des paroles"
+            autocomplete="off" spellcheck="false" enterkeyhint="search" />
+          <button type="submit" class="secondary small">Chercher</button>
+        </form>
+        <select id="lyricsResults" aria-label="Résultats de la recherche" hidden></select>
         <label>Décalage <input type="text" class="time" id="lyricsOffsetText" autocomplete="off" spellcheck="false"
             title="En secondes (ex. +2.5 ou -12) puis Entrée · ↑/↓ : ±0,1 s · Maj+↑/↓ : ±1 s" />
           <input type="range" id="lyricsOffset" min="-60" max="60" step="0.1" value="0" title="Double-clic pour revenir à 0" />

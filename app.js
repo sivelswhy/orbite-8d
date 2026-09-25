@@ -333,6 +333,7 @@ function setBuffer(buf, name) {
   setLyrics([], "");
   setLyricsOffset(0);
   $("lyricsText").value = "";
+  showLyricsResults([]);
   updateDurationOptions();
   ui.fileName.textContent = name;
   levels = computeLevels(buf);
@@ -876,26 +877,63 @@ function parseLrc(lrc) {
   return out.sort((a, b) => a.t - b.t);
 }
 
-async function findLyrics() {
+// Results of the last search; the list lets the user switch to another version.
+let lyricsResults = [];
+
+function showLyricsResults(results) {
+  lyricsResults = results;
+  const list = $("lyricsResults");
+  list.innerHTML = "";
+  results.forEach((r, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = `${r.trackName} – ${r.artistName} (${fmt(r.duration)})`;
+    list.appendChild(o);
+  });
+  list.hidden = results.length < 2;
+}
+
+function useLyricsResult(r) {
+  const lines = parseLrc(r.syncedLyrics);
+  setLyrics(lines, `Paroles : ${r.trackName} – ${r.artistName} (${lines.length} lignes). Si elles sont décalées, ajuste le décalage.`);
+  $("lyricsText").value = r.syncedLyrics;
+}
+
+// Searches lrclib.net and applies the result closest in duration to the loaded
+// track (most likely the same version). Automatic on load, or typed by the user.
+async function searchLyrics(params, label) {
   const id = ++lyricsRequest;
-  const { song, artist } = trackInfo;
-  if (!song) return setLyrics([], "Pas de titre de morceau : colle des paroles LRC ci-dessous.");
-  lyricsMessage(`Recherche des paroles de « ${song} »…`);
+  lyricsMessage(`Recherche des paroles de « ${label} »…`);
   try {
-    const params = new URLSearchParams(artist ? { track_name: song, artist_name: artist } : { q: song });
-    const res = await fetch(`https://lrclib.net/api/search?${params}`);
+    const res = await fetch(`https://lrclib.net/api/search?${new URLSearchParams(params)}`);
     const results = (await res.json()).filter((r) => r.syncedLyrics && parseLrc(r.syncedLyrics).length > 3);
-    if (id !== lyricsRequest) return; // another track was loaded meanwhile
-    if (!results.length) return setLyrics([], `Aucune parole synchronisée trouvée pour « ${song} ». Tu peux en coller ci-dessous.`);
-    // Closest duration to the loaded track = most likely the same version.
-    const best = results.sort((a, b) => Math.abs(a.duration - buffer.duration) - Math.abs(b.duration - buffer.duration))[0];
-    const lines = parseLrc(best.syncedLyrics);
-    setLyrics(lines, `Paroles : ${best.trackName} – ${best.artistName} (${lines.length} lignes). Si elles sont décalées, ajuste le décalage.`);
-    $("lyricsText").value = best.syncedLyrics;
+    if (id !== lyricsRequest) return; // a newer search or track took over
+    if (buffer) results.sort((a, b) => Math.abs(a.duration - buffer.duration) - Math.abs(b.duration - buffer.duration));
+    showLyricsResults(results);
+    if (!results.length) return setLyrics([], `Aucune parole synchronisée trouvée pour « ${label} ». Essaie une autre recherche ou colle des paroles ci-dessous.`);
+    useLyricsResult(results[0]);
   } catch (_) {
     if (id === lyricsRequest) setLyrics([], "Impossible de joindre lrclib.net. Tu peux coller des paroles ci-dessous.");
   }
 }
+
+function findLyrics() {
+  const { song, artist } = trackInfo;
+  $("lyricsQuery").value = [song, artist].filter(Boolean).join(" ");
+  if (!song) return setLyrics([], "Pas de titre de morceau : cherche les paroles ci-dessus ou colle des paroles LRC ci-dessous.");
+  searchLyrics(artist ? { track_name: song, artist_name: artist } : { q: song }, song);
+}
+
+$("lyricsSearch").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("lyricsQuery").value.trim();
+  if (q) searchLyrics({ q }, q);
+});
+
+$("lyricsResults").addEventListener("change", (e) => {
+  const r = lyricsResults[+e.target.value];
+  if (r) useLyricsResult(r);
+});
 
 // Offset in seconds added to the playback time: positive = lyrics come earlier.
 const LYRICS_OFFSET_MAX = 60;
