@@ -11,7 +11,7 @@ const ui = {
   file: $("file"), drop: $("drop"), fileName: $("fileName"), url: $("url"),
   speed: $("speed"), intensity: $("intensity"), reverb: $("reverb"),
   speedOut: $("speedOut"), intensityOut: $("intensityOut"), reverbOut: $("reverbOut"),
-  showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"),
+  showHead: $("showHead"), showLogo: $("showLogo"), showIntro: $("showIntro"), showCover: $("showCover"),
   showLyrics: $("showLyrics"), lyricsOffset: $("lyricsOffset"), lyricsOffsetText: $("lyricsOffsetText"),
   lyricsLine: $("lyricsLine"), lyricsNow: $("lyricsNow"),
   start: $("start"), end: $("end"), startTime: $("startTime"), endTime: $("endTime"), duration: $("duration"), excerptInfo: $("excerptInfo"),
@@ -1013,6 +1013,54 @@ function drawIntro(elapsed, length) {
   g.restore();
 }
 
+// TikTok cover: the very first frame of the export (1/30 s, unnoticed when
+// watching) is a title card, and TikTok uses it as the thumbnail on the profile.
+// The text stays in the middle, inside the 3:4 crop of the profile grid.
+function drawCover() {
+  const { song, artist } = trackInfo;
+  g.save();
+  g.fillStyle = "#07070f";
+  g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 700);
+  glow.addColorStop(0, "rgba(139,123,255,0.4)");
+  glow.addColorStop(1, "rgba(139,123,255,0)");
+  g.fillStyle = glow;
+  g.fillRect(0, 0, W, H);
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+
+  // Title: as big as fits in 3 lines of 900 px.
+  const title = (song || "8D Audio").toUpperCase();
+  let size = 150, lines;
+  for (; size > 60; size -= 6) {
+    g.font = `800 ${size}px Outfit, system-ui, sans-serif`;
+    lines = wrapText(title, 900);
+    if (lines.length <= 3) break;
+  }
+  const lineH = size * 1.08;
+  const blockH = lines.length * lineH + (artist ? 110 : 0);
+  let y = H / 2 - blockH / 2 + lineH / 2 + 40;
+
+  g.fillStyle = "#3de0d0";
+  g.font = "700 48px Outfit, system-ui, sans-serif";
+  g.letterSpacing = "12px";
+  g.fillText("8D AUDIO 🎧", W / 2, y - lineH / 2 - 90);
+  g.letterSpacing = "0px";
+
+  g.fillStyle = "#fff";
+  g.font = `800 ${size}px Outfit, system-ui, sans-serif`;
+  g.shadowColor = "rgba(139,123,255,0.7)";
+  g.shadowBlur = 30;
+  for (const line of lines) { g.fillText(line, W / 2, y); y += lineH; }
+  g.shadowBlur = 0;
+  if (artist) {
+    g.fillStyle = "rgba(255,255,255,0.75)";
+    g.font = "600 60px Outfit, system-ui, sans-serif";
+    g.fillText(wrapText(artist, 900)[0], W / 2, y + 40);
+  }
+  g.restore();
+}
+
 // ---------- Lyrics ----------
 // Synced lyrics (LRC) from lrclib.net, shown one line at a time in the middle
 // of the video with a fade in/out. Times are track times, so the excerpt and
@@ -1463,13 +1511,20 @@ $("lyricsApply").addEventListener("click", () => {
 });
 
 // Splits text into lines that fit maxW with the current font.
+// Lines of at most maxW px (current font); words too long, or scripts
+// without spaces (Japanese, Chinese…), are cut between characters.
 function wrapText(text, maxW) {
   const lines = [];
   let line = "";
-  for (const word of text.split(/\s+/)) {
+  for (const word of text.split(/\s+/).filter(Boolean)) {
     const test = line ? `${line} ${word}` : word;
-    if (line && g.measureText(test).width > maxW) { lines.push(line); line = word; }
-    else line = test;
+    if (g.measureText(test).width <= maxW) { line = test; continue; }
+    if (line) lines.push(line);
+    line = "";
+    for (const ch of word) {
+      if (line && g.measureText(line + ch).width > maxW) { lines.push(line); line = ""; }
+      line += ch;
+    }
   }
   if (line) lines.push(line);
   return lines;
@@ -1584,6 +1639,7 @@ function frame(now) {
   drawScene(bassLevel);
   drawOverlay(bassLevel, playing && ctx.currentTime >= playStartCtx ? playPosition() : null);
   if (introLength && introLeft > 0) drawIntro(introLength - introLeft, introLength);
+  if (recording && now < recording.coverUntil) drawCover(); // real-time export: TikTok cover
   checkExcerptEnd();
   if (recording) updateProgress();
   requestAnimationFrame(frame);
@@ -1688,7 +1744,7 @@ function realtimeExport() {
   ]);
   const chunks = [];
   const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 20_000_000, audioBitsPerSecond: 256_000 });
-  recording = { rec, cancelled: false };
+  recording = { rec, cancelled: false, coverUntil: ui.showCover.checked ? performance.now() + 100 : 0 };
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   rec.onstop = () => {
     stream.getVideoTracks().forEach((tr) => tr.stop());
@@ -1993,6 +2049,7 @@ async function fastExport() {
       drawBackground(cur, prev, fade, bass[i]);
       drawOverlay(bass[i], excerpt.start + t * r);
       if (introLen && t < introLen) drawIntro(t, introLen);
+      if (i === 0 && ui.showCover.checked) drawCover();
       const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
       encoder.encode(frame, { keyFrame: i % (FPS * 2) === 0 });
       frame.close();
