@@ -9,6 +9,7 @@ const exportRoute = require("./api/export");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 8000);
+const host = process.env.HOST || "127.0.0.1";
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -56,7 +57,7 @@ http.createServer((req, res) => {
     res.writeHead(200, { ...headers, "Content-Length": stat.size });
     fs.createReadStream(file).pipe(res);
   });
-// Only this Mac: the TikTok routes publish on the user's account.
-}).listen(port, "127.0.0.1", () => {
+// Only this Mac by default: the TikTok routes publish on the user's account.
+}).listen(port, host, () => {
   console.log(`Orbite 8D: http://localhost:${port}`);
 });
