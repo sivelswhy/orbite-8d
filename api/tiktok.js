@@ -114,8 +114,30 @@ async function fillCaption(p, caption) {
   await editor.click();
   await p.keyboard.press("ControlOrMeta+A");
   await p.keyboard.press("Backspace");
-  await p.keyboard.type(caption, { delay: 25 });
+  await typeCaption(p, caption);
   await p.keyboard.press("Escape"); // closes the hashtag suggestions
+}
+
+// keyboard.type sends no key events for characters outside the US layout
+// (other alphabets, emoji), and TikTok's editor drops them: those runs are
+// pasted instead. The rest is typed, so hashtags still get recognised.
+async function typeCaption(p, caption) {
+  for (const [run] of caption.matchAll(CAPTION_RUNS)) {
+    if (/^[\x20-\x7e\n]/.test(run)) await p.keyboard.type(run, { delay: 25 });
+    else await pasteText(p, run);
+  }
+}
+const CAPTION_RUNS = /[\x20-\x7e\n]+|[^\x20-\x7e\n]+/g;
+
+async function pasteText(p, text) {
+  const handled = await p.evaluate((t) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", t);
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    document.activeElement.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, text);
+  if (!handled) await p.keyboard.insertText(text); // editor without its own paste handling
 }
 
 // Post button becomes enabled once TikTok has finished processing the upload.
@@ -241,3 +263,4 @@ function tiktok(req, res) {
 }
 
 module.exports = tiktok;
+module.exports.typeCaption = typeCaption;
