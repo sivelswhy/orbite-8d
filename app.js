@@ -151,6 +151,7 @@ let cursor = null; // where "Écouter" resumes (track seconds); null = start of 
 const INTRO_SECONDS = 1.5;
 let excerpt = { start: 0, length: 30 };
 let sel = { start: 0, end: 30 }; // chosen range in seconds; excerpt is derived from it
+let highlight = null; // start of the chorus (track seconds), shown as a red dot on the waveform
 
 // Output fades (40 ms). Muting on stop also cuts the reverb tail, which
 // otherwise keeps ringing like an echo after the music.
@@ -425,6 +426,7 @@ function setBuffer(buf, name) {
   levels = computeLevels(buf);
   applyPreset();
   $("chorusMsg").textContent = "";
+  highlight = null;
   goToChorus();
   autoSel = { ...sel };
 }
@@ -439,6 +441,7 @@ const waveG = wave.getContext("2d");
 const WAVE_BUCKETS = 800;
 const DB_FLOOR = -60;
 const HANDLE_W = 12; // CSS px
+const SNAP_PX = 12; // the frame snaps onto the chorus dot within this distance
 // Waveform colours come from tokens.css, so the canvas matches the interface.
 // OKLCH tokens are converted to rgb() so every canvas implementation accepts them.
 function cssToken(name) {
@@ -500,6 +503,7 @@ function drawWave() {
   if (!w || !h) return;
   if (wave.width !== w || wave.height !== h) { wave.width = w; wave.height = h; }
   waveG.clearRect(0, 0, w, h);
+  showMarker();
   if (!levels || !buffer) return;
 
   const total = buffer.duration;
@@ -626,17 +630,46 @@ function dragWave(e) {
   } else {
     const len = sel.end - sel.start;
     sel.start = Math.max(0, Math.min(t - waveDrag.offset, total - len));
+    const snap = snapStart(len);
+    const pxPerSec = wave.getBoundingClientRect().width / total;
+    if (snap !== null && Math.abs(sel.start - snap) * pxPerSec <= SNAP_PX) sel.start = snap;
     sel.end = sel.start + len;
   }
   computeExcerpt();
 }
+
+// Where the excerpt starts when placed on the chorus dot (a little before it).
+function snapStart(len) {
+  if (highlight === null) return null;
+  return Math.max(0, Math.min(highlight - CHORUS_PREROLL, buffer.duration - len));
+}
+
+// Red dot under the waveform on the chorus, like Instagram's music picker.
+const waveDot = $("waveDot");
+function showMarker() {
+  waveDot.hidden = highlight === null || !buffer;
+  if (waveDot.hidden) return;
+  waveDot.style.left = `${(highlight / buffer.duration) * 100}%`;
+  waveDot.title = `Refrain à ${fmt(highlight)} : clique pour y placer l'extrait`;
+}
+// Clicking the dot places the excerpt on the chorus and plays it.
+waveDot.addEventListener("click", () => {
+  if (!buffer || highlight === null || waveWrap.classList.contains("disabled")) return;
+  const len = sel.end - sel.start;
+  sel.start = snapStart(len);
+  sel.end = sel.start + len;
+  computeExcerpt();
+  cursor = null;
+  if (playing) player.currentTime = excerpt.start;
+  else startSource();
+});
 
 wave.addEventListener("pointerdown", (e) => {
   if (!buffer || waveWrap.classList.contains("disabled")) return;
   const { t } = waveTime(e);
   const hit = waveHit(e);
   // Tapping outside the frame moves the whole selection to start there.
-  waveDrag = { mode: hit || "move", offset: hit === "move" ? t - sel.start : 0 };
+  waveDrag = { mode: hit || "move", offset: hit === "move" ? t - sel.start : 0, from: sel.start };
   wave.setPointerCapture(e.pointerId);
   dragWave(e);
 });
@@ -652,10 +685,15 @@ wave.addEventListener("pointermove", (e) => {
   wave.style.cursor = hit === "start" || hit === "end" ? "ew-resize" : hit === "move" ? "grab" : "pointer";
 });
 wave.addEventListener("pointerleave", () => { waveTip.hidden = true; });
+// Like Instagram: once the frame is dropped somewhere new, the excerpt plays from its start.
 wave.addEventListener("pointerup", () => {
   if (!waveDrag) return;
+  const moved = waveDrag.mode === "move" && waveDrag.from !== sel.start;
   waveDrag = null;
-  relaunchIfPlaying();
+  if (!moved) return relaunchIfPlaying();
+  cursor = null;
+  if (playing) player.currentTime = excerpt.start;
+  else startSource();
 });
 window.addEventListener("resize", drawWave);
 
@@ -1369,10 +1407,15 @@ function goToChorus({ lyricsOnly = false } = {}) {
   if (t === null && !lyricsOnly) { t = chorusFromAudio(buffer, len); source = "son"; }
   const msg = $("chorusMsg");
   if (t === null) {
-    if (!lyricsOnly) msg.textContent = "Refrain pas trouvé avec assez de certitude : extrait laissé au début.";
+    if (!lyricsOnly) {
+      msg.textContent = "Refrain pas trouvé avec assez de certitude : extrait laissé au début.";
+      highlight = null;
+      drawWave();
+    }
     return false;
   }
-  const start = Math.max(0, Math.min(t - CHORUS_PREROLL, total - len));
+  highlight = Math.min(Math.max(0, t), total);
+  const start = snapStart(len);
   sel = { start, end: start + len };
   computeExcerpt();
   relaunchIfPlaying();

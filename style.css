@@ -302,6 +302,24 @@ button.small { padding: var(--space-3xs) var(--space-xs); font-size: var(--text-
   white-space: nowrap;
 }
 
+/* Instagram-like red dot under the waveform, on the chorus. */
+.wave-marks { position: relative; height: 14px; margin: calc(-1 * var(--space-3xs)) 0 var(--space-3xs); }
+.wave-dot {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-marker);
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+.wave-dot::before { content: ""; position: absolute; inset: -8px; } /* bigger hit area */
+.wave-dot:hover { transform: translate(-50%, -50%) scale(1.3); }
+.wave-dot:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
 .chorus-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2xs) var(--space-xs); margin-bottom: var(--space-2xs); }
 .chorus-row .hint { margin: 0; }
 

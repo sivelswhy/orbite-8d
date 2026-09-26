@@ -19,6 +19,7 @@
   --color-danger:     oklch(74% 0.15 28);
   --color-ok:         oklch(78% 0.16 150);   /* green LED: done */
   --color-ok-low:     oklch(30% 0.06 150);
+  --color-marker:     oklch(64% 0.22 25);    /* red dot: best moment of the track (Instagram-like) */
 
   --font-body:    "Geist", ui-sans-serif, sans-serif;
   --font-display: "Geist", ui-sans-serif, sans-serif;
