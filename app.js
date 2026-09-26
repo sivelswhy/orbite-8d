@@ -1648,6 +1648,7 @@ function finishExport(blob, extension) {
   lastExport = blob;
   captionInput.value = defaultCaption();
   $("tiktok").hidden = false;
+  if (autoTikTok.checked) prepareOnTikTok({ auto: true });
 }
 
 // Hides the previous video's download link and TikTok panel.
@@ -2137,9 +2138,17 @@ ui.file.addEventListener("change", () => loadFile(ui.file.files[0]));
 // ---------- Publication TikTok ----------
 // The local server drives a Chromium window (api/tiktok.js); this page sends the
 // exported video and follows the progress. It clicks "Post" itself when "auto" is
-// ticked; otherwise posting is left to the user, in TikTok.
+// ticked; otherwise posting is left to the user, in TikTok. With "Publier sur
+// TikTok à la fin de l'export", every export is posted this way in the background.
 let lastExport = null;
 const captionInput = $("caption");
+
+// "Publier sur TikTok à la fin de l'export": on by default, remembered per browser.
+const autoTikTok = $("autoTikTok");
+try { autoTikTok.checked = localStorage.getItem("orbite-auto-tiktok") !== "0"; } catch (_) {}
+autoTikTok.addEventListener("change", () => {
+  try { localStorage.setItem("orbite-auto-tiktok", autoTikTok.checked ? "1" : "0"); } catch (_) {}
+});
 
 // English caption with the song and artist, refilled after each export (editable).
 function defaultCaption() {
@@ -2178,15 +2187,15 @@ async function waitTikTok(states) {
   }
 }
 
-async function prepareOnTikTok() {
+// auto: clicks "Post" itself (always true right after an export), else the "Publier automatiquement" box.
+async function prepareOnTikTok({ auto = $("autoPost").checked } = {}) {
   if (!lastExport) return;
   const btn = $("tiktokBtn");
   btn.disabled = true;
   try {
     tiktokMessage("Envoi de la vidéo au serveur local…");
     const caption = captionInput.value.trim();
-    const auto = $("autoPost").checked ? "&auto=1" : "";
-    await tiktokPost(`prepare?caption=${encodeURIComponent(caption)}${auto}`, lastExport, lastExport.type);
+    await tiktokPost(`prepare?caption=${encodeURIComponent(caption)}${auto ? "&auto=1" : ""}`, lastExport, lastExport.type);
     const job = await waitTikTok(["ready", "published", "check", "error", "idle"]);
     btn.disabled = false;
     // Manual mode: keep following, the window closes itself once the user has posted.
@@ -2197,7 +2206,7 @@ async function prepareOnTikTok() {
     btn.disabled = false;
   }
 }
-$("tiktokBtn").addEventListener("click", prepareOnTikTok);
+$("tiktokBtn").addEventListener("click", () => prepareOnTikTok());
 
 // ---------- Import par lien ----------
 const URL_HINT = "Lien direct audio, Dropbox, YouTube ou Spotify. YouTube et Spotify passent par le serveur local.";

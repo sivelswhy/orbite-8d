@@ -142,6 +142,7 @@
           <button id="play" class="secondary">▶ Écouter</button>
           <button id="export" class="primary">Exporter la vidéo</button>
         </div>
+        <label class="check"><input type="checkbox" id="autoTikTok" checked /> Publier sur TikTok à la fin de l'export</label>
         <div class="progress" id="progress" hidden>
           <div class="bar"><div id="progressBar"></div></div>
           <p id="progressText"></p>
@@ -153,7 +154,7 @@
           <label>Légende <input type="text" id="caption" maxlength="2200" /></label>
           <label class="check"><input type="checkbox" id="autoPost" checked /> Publier automatiquement</label>
           <button id="tiktokBtn" class="primary">Publier sur TikTok</button>
-          <p class="hint" id="tiktokMsg">S'ouvre dans une fenêtre Chromium (connexion à TikTok la première fois).</p>
+          <p class="hint" id="tiktokMsg">En publication automatique, Chromium tourne en arrière-plan. Une fenêtre s'ouvre seulement pour te connecter à TikTok la première fois.</p>
         </div>
         <p class="hint"><span id="exportMode">Enregistré en temps réel : garde l'onglet au premier plan</span> · <span id="format"></span></p>
       </div>

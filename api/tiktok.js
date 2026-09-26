@@ -1,9 +1,10 @@
 "use strict";
 
-// Posts an exported video on TikTok by driving a visible Chromium window:
-// upload + caption, then either clicks "Post" itself (auto) or waits for the
-// user's click. Once TikTok has left the upload page, the window is closed.
-// The user logs in once in that window; the session is kept in PROFILE_DIR.
+// Posts an exported video on TikTok by driving Chromium: upload + caption,
+// then either clicks "Post" itself (auto) or waits for the user's click.
+// Once TikTok has left the upload page, the browser is closed.
+// Auto posts run in the background (headless) once logged in; the window only
+// shows up to log in (first time, kept in PROFILE_DIR) or to post by hand.
 
 const fs = require("fs");
 const os = require("os");
@@ -27,6 +28,7 @@ const BUSY = new Set(["opening", "login", "uploading", "posting"]);
 const POST_TIMEOUT = 5 * 60_000; // after the click, time for TikTok (and any "post now" dialog)
 
 let context = null;
+let hidden = false; // context runs headless (no window)
 let page = null;
 let videoFile = null;
 let job = { state: "idle", message: "" };
@@ -36,19 +38,50 @@ function setJob(state, message) {
   job = { state, message };
 }
 
-async function getPage() {
+async function launch(headless) {
+  const { chromium } = require("playwright");
+  // channel "chromium": the full browser in its new headless mode, not the stripped headless shell.
+  const c = await chromium.launchPersistentContext(PROFILE_DIR, headless
+    ? { channel: "chromium", headless: true, viewport: { width: 1280, height: 900 } }
+    : { headless: false, viewport: null });
+  c.on("close", () => {
+    if (context !== c) return; // closed on purpose to relaunch it
+    context = null;
+    page = null;
+    if (resolvePostClick) resolvePostClick(false);
+    if (job.state !== "published") setJob("idle", "Fenêtre TikTok fermée.");
+  });
+  context = c;
+  hidden = headless;
+  page = null;
+}
+
+async function closeQuietly() {
+  const c = context;
+  context = null;
+  page = null;
+  if (c) await c.close().catch(() => {});
+}
+
+// background: headless if the TikTok session is already there; otherwise
+// (login needed, or manual posting) a visible window.
+async function getPage({ background = false } = {}) {
+  if (context && hidden && !background) await closeQuietly();
   if (!context) {
-    const { chromium } = require("playwright");
-    context = await chromium.launchPersistentContext(PROFILE_DIR, { headless: false, viewport: null });
-    context.on("close", () => {
-      context = null;
-      page = null;
-      if (resolvePostClick) resolvePostClick(false);
-      if (job.state !== "published") setJob("idle", "Fenêtre TikTok fermée.");
-    });
+    await launch(background);
+    if (background && !(await isLoggedIn())) {
+      await closeQuietly();
+      await launch(false);
+    }
   }
   if (!page || page.isClosed()) {
     page = context.pages()[0] || (await context.newPage());
+    // Headless Chromium says "HeadlessChrome" in its user agent: TikTok must see a normal Chrome.
+    if (hidden) {
+      const ua = await page.evaluate(() => navigator.userAgent);
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Network.setUserAgentOverride", { userAgent: ua.replace("HeadlessChrome", "Chrome") });
+    }
     // Called from the page when the user clicks "Post" (survives the navigation that follows).
     await page.exposeFunction("orbitePostClicked", () => resolvePostClick && resolvePostClick(true));
   }
@@ -107,9 +140,9 @@ async function fail(error) {
 
 async function prepare(file, caption, auto) {
   try {
-    setJob("opening", "Ouverture de TikTok…");
-    const p = await getPage();
-    await p.bringToFront();
+    setJob("opening", auto ? "Ouverture de TikTok en arrière-plan…" : "Ouverture de TikTok…");
+    const p = await getPage({ background: auto });
+    if (!hidden) await p.bringToFront();
     await openUploadPage(p);
     setJob("uploading", "Envoi de la vidéo à TikTok…");
     await p.locator(SELECTORS.fileInput).first().setInputFiles(file);
@@ -122,6 +155,7 @@ async function prepare(file, caption, auto) {
     closeAfterPost(p);
   } catch (error) {
     await fail(error);
+    if (hidden) await closeQuietly(); // no window left open in the background
   }
 }
 
@@ -152,10 +186,14 @@ async function closeAfterPost(p) {
 async function finishPost(p) {
   const posted = await p.waitForURL((u) => !u.pathname.includes("/upload"), { timeout: POST_TIMEOUT }).then(() => true, () => false);
   if (!posted) {
+    if (hidden) {
+      await fail(new Error("Je n'ai pas vu TikTok confirmer la publication : vérifie sur ton profil TikTok"));
+      return closeQuietly();
+    }
     setJob("check", "Je n'ai pas vu TikTok confirmer la publication : la fenêtre reste ouverte, vérifie.");
     return;
   }
-  setJob("published", "Vidéo publiée : fenêtre TikTok fermée.");
+  setJob("published", hidden ? "Vidéo publiée sur TikTok." : "Vidéo publiée : fenêtre TikTok fermée.");
   removeVideoFile();
   await p.waitForTimeout(1500);
   if (context) await context.close().catch(() => {});
