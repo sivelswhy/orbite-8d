@@ -2157,7 +2157,8 @@ async function prepareOnTikTok() {
 $("tiktokBtn").addEventListener("click", prepareOnTikTok);
 
 // ---------- Import par lien ----------
-const URL_HINT = "Lien direct audio, Dropbox ou YouTube. YouTube est converti en MP3 par le serveur local.";
+const URL_HINT = "Lien direct audio, Dropbox, YouTube ou Spotify. YouTube et Spotify passent par le serveur local.";
+const SERVER_AUDIO_HOSTS = /(^|\.)youtube\.com$|^youtu\.be$|(^|\.)youtube-nocookie\.com$|^open\.spotify\.com$/;
 const YOUTUBE_AUDIO_ENDPOINT = "/api/youtube-audio";
 
 function urlMessage(text, isError) {
@@ -2171,7 +2172,7 @@ function normalizeAudioUrl(raw) {
   const u = new URL(raw.trim());
   if (!/^https?:$/.test(u.protocol)) throw new Error("protocol");
   const host = u.hostname.replace(/^www\./, "");
-  if (/(^|\.)youtube\.com$|^youtu\.be$|(^|\.)youtube-nocookie\.com$/.test(host)) return u.toString();
+  if (SERVER_AUDIO_HOSTS.test(host)) return u.toString();
   if (host === "dropbox.com") {
     u.hostname = "dl.dropboxusercontent.com";
     u.searchParams.delete("dl");
@@ -2183,20 +2184,19 @@ function normalizeAudioUrl(raw) {
 
 async function loadUrl(raw) {
   let url;
-  let isYouTube = false;
+  let viaServer = false;
   try {
     url = normalizeAudioUrl(raw);
-    isYouTube = /(^|\.)youtube\.com$|^youtu\.be$|(^|\.)youtube-nocookie\.com$/
-      .test(new URL(url).hostname.replace(/^www\./, ""));
+    viaServer = SERVER_AUDIO_HOSTS.test(new URL(url).hostname.replace(/^www\./, ""));
   } catch (e) {
     urlMessage("Lien invalide.", true);
     return;
   }
   const btn = $("urlBtn");
   btn.disabled = true;
-  urlMessage("Téléchargement…");
+  urlMessage(/open\.spotify\.com/.test(url) ? "Recherche du morceau Spotify sur YouTube…" : "Téléchargement…");
   try {
-    const requestUrl = isYouTube
+    const requestUrl = viaServer
       ? `${YOUTUBE_AUDIO_ENDPOINT}?url=${encodeURIComponent(url)}`
       : url;
     const res = await fetch(requestUrl);
@@ -2206,11 +2206,11 @@ async function loadUrl(raw) {
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const buf = await ctx.decodeAudioData(await res.arrayBuffer());
-    const ytTitle = isYouTube ? decodeURIComponent(res.headers.get("x-audio-title") || "") : "";
-    const name = isYouTube ? ytTitle || "youtube-audio" : decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
+    const ytTitle = viaServer ? decodeURIComponent(res.headers.get("x-audio-title") || "") : "";
+    const name = viaServer ? ytTitle || "youtube-audio" : decodeURIComponent(new URL(raw).pathname.split("/").pop() || "audio");
     setBuffer(buf, name);
-    trackName = isYouTube ? fileBaseName(`${name}.mp3`) : fileBaseName(name);
-    trackInfo = isYouTube
+    trackName = viaServer ? fileBaseName(`${name}.mp3`) : fileBaseName(name);
+    trackInfo = viaServer
       ? describeTrack(name, decodeURIComponent(res.headers.get("x-audio-artist") || ""))
       : describeTrack(name.replace(/\.[^.]+$/, ""));
     findLyrics();

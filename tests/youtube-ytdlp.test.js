@@ -25,3 +25,19 @@ test("uses track and artist for music videos, the title otherwise", () => {
   assert.deepEqual(parseInfo("Me at the zoo\tNA\tNA\tjawed"), { title: "Me at the zoo", artist: "jawed" });
   assert.deepEqual(parseInfo("Song\t\tA, B\tChannel"), { title: "Song", artist: "A" });
 });
+
+test("accepts only Spotify track URLs", () => {
+  const { getSpotifyTrackId } = require("../api/youtube-audio");
+  assert.equal(getSpotifyTrackId("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?si=abc"), "4cOdK2wGLETKBW3PvgPWqT");
+  assert.equal(getSpotifyTrackId("https://open.spotify.com/intl-fr/track/4cOdK2wGLETKBW3PvgPWqT"), "4cOdK2wGLETKBW3PvgPWqT");
+  assert.equal(getSpotifyTrackId("https://open.spotify.com/album/4cOdK2wGLETKBW3PvgPWqT"), null);
+  assert.equal(getSpotifyTrackId("https://evil.com/track/4cOdK2wGLETKBW3PvgPWqT"), null);
+});
+
+test("reads title and main artist from the Spotify embed page", () => {
+  const { parseSpotifyEmbed } = require("../api/youtube-audio");
+  const data = { props: { pageProps: { state: { data: { entity: { name: "Song", artists: [{ name: "A" }, { name: "B" }] } } } } } };
+  const html = `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify(data)}</script>`;
+  assert.deepEqual(parseSpotifyEmbed(html), { title: "A - Song", artist: "A", track: "Song" });
+  assert.throws(() => parseSpotifyEmbed("<html></html>"));
+});

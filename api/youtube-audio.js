@@ -17,6 +17,34 @@ function isYouTubeUrl(value) {
   }
 }
 
+// open.spotify.com/track/<id> (also /intl-fr/track/<id>) → the track id, else null.
+function getSpotifyTrackId(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "open.spotify.com") return null;
+    const match = url.pathname.match(/^(?:\/intl-[\w-]+)?\/track\/([A-Za-z0-9]{22})\/?$/);
+    return match ? match[1] : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Spotify audio is DRM-protected: only the title and artists are read (from
+// the public embed page), then the same song is searched on YouTube.
+function parseSpotifyEmbed(html) {
+  const json = html.match(/<script id="__NEXT_DATA__"[^>]*>([^<]+)<\/script>/);
+  const entity = json && JSON.parse(json[1]).props?.pageProps?.state?.data?.entity;
+  if (!entity || !entity.name) throw new Error("Morceau Spotify introuvable.");
+  const artist = (entity.artists || [])[0]?.name || "";
+  return { title: artist ? `${artist} - ${entity.name}` : entity.name, artist, track: entity.name };
+}
+
+async function getSpotifyTrack(id) {
+  const res = await fetch(`https://open.spotify.com/embed/track/${id}`);
+  if (!res.ok) throw new Error(`Spotify : HTTP ${res.status}`);
+  return parseSpotifyEmbed(await res.text());
+}
+
 function getParam(req, name) {
   return new URL(req.url, "http://localhost").searchParams.get(name);
 }
@@ -56,8 +84,19 @@ function sendText(res, status, text) {
 async function youtubeAudio(req, res) {
   if (req.method !== "GET") return sendText(res, 405, "Method not allowed");
 
-  const url = getParam(req, "url");
-  if (!url || !isYouTubeUrl(url)) return sendText(res, 400, "A valid HTTPS YouTube URL is required");
+  let url = getParam(req, "url");
+  let spotify = null;
+  const spotifyId = url && getSpotifyTrackId(url);
+  if (spotifyId) {
+    try {
+      spotify = await getSpotifyTrack(spotifyId);
+    } catch (error) {
+      return sendText(res, 502, error.message);
+    }
+    url = `ytsearch1:${spotify.artist} ${spotify.track} audio`;
+  } else if (!url || !isYouTubeUrl(url)) {
+    return sendText(res, 400, "A valid HTTPS YouTube or Spotify track URL is required");
+  }
 
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbite-ytdlp-"));
   const cleanup = () => fs.rm(outputDir, { recursive: true, force: true }, () => {});
@@ -81,7 +120,7 @@ async function youtubeAudio(req, res) {
       cleanup();
       return sendText(res, 502, errorOutput.trim() || "yt-dlp download failed");
     }
-    const meta = parseInfo(info.trim().split("\n").pop() || "");
+    const meta = spotify || parseInfo(info.trim().split("\n").pop() || "");
     res.writeHead(200, {
       "Cache-Control": "no-store",
       "Content-Type": "audio/mpeg",
@@ -98,3 +137,5 @@ module.exports = youtubeAudio;
 module.exports.getYtdlpArgs = getYtdlpArgs;
 module.exports.parseInfo = parseInfo;
 module.exports.isYouTubeUrl = isYouTubeUrl;
+module.exports.getSpotifyTrackId = getSpotifyTrackId;
+module.exports.parseSpotifyEmbed = parseSpotifyEmbed;

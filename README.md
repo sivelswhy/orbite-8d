@@ -19,7 +19,7 @@ Si YouTube ne marche plus, `brew upgrade yt-dlp` règle le problème en généra
 
 ## Utilisation
 
-1. Charger un morceau : fichier, lien direct, Dropbox ou YouTube.
+1. Charger un morceau : fichier, lien direct, Dropbox, YouTube ou Spotify. Spotify ne donne pas accès au son : le serveur lit le titre et l'artiste du lien Spotify, puis prend le premier résultat YouTube pour ce morceau.
 2. Régler le 8D (vitesse, intensité, réverb) et choisir l'extrait. Il se place tout seul sur le refrain (d'après les paroles, sinon d'après le son), et le bouton « Aller au refrain » relance la recherche.
 3. Les paroles sont trouvées toutes seules sur lrclib.net. Sinon on peut les chercher à la main ou coller un fichier LRC, et corriger le décalage (le bouton « Sync auto » essaie de le trouver tout seul).
 4. Exporter. Le rendu est accéléré (WebCodecs + ffmpeg du serveur local) : une vidéo de 30 s sort en quelques secondes. Sur un navigateur sans WebCodecs, l'enregistrement se fait en temps réel et il faut garder l'onglet ouvert devant.
