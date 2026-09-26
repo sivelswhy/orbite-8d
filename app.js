@@ -725,7 +725,8 @@ async function makeDemo() {
 }
 
 // ---------- Scenes (vertical 1080×1920 city videos, muted) ----------
-// Every clip plays once in a shuffled order, then the list is reshuffled.
+// Every clip plays once in a shuffled order, then the list is reshuffled;
+// two clips of the same place never follow each other.
 const scenes = [
   { id: "dubai-downtown", name: "Dubai Downtown" },
   { id: "dubai-lumieres", name: "Dubai lumières" },
@@ -796,11 +797,28 @@ function shuffle(list) {
   return a;
 }
 
-function nextRandomScene() {
-  if (!queue.length) {
-    queue = shuffle(scenes);
-    if (queue[0] === current) queue.push(queue.shift()); // never the same clip twice in a row
+// Place of a clip ("venise-2" → "venise", "londres-knightsbridge" → "londres").
+const place = (s) => s.id.split("-")[0];
+
+// Shuffled scenes where two clips of the same place never follow each other,
+// starting with a different place than `last` (the clip on screen before).
+function shuffleScenes(last) {
+  for (;;) {
+    const pool = shuffle(scenes);
+    const order = [];
+    let prev = last;
+    while (pool.length) {
+      const i = pool.findIndex((s) => !prev || place(s) !== place(prev));
+      if (i < 0) break; // only one place left at the end: draw again
+      prev = pool.splice(i, 1)[0];
+      order.push(prev);
+    }
+    if (!pool.length) return order;
   }
+}
+
+function nextRandomScene() {
+  if (!queue.length) queue = shuffleScenes(current);
   const next = queue.shift();
   sceneVideo(queue[0] || next); // start buffering the one after
   return next;
@@ -1739,14 +1757,11 @@ class ClipReader {
   }
 }
 
-// Endless random order of clips, never the same twice in a row (like nextRandomScene).
+// Endless random order of clips, never the same place twice in a row (like nextRandomScene).
 function clipOrder() {
   let queue = [], last = null;
   return () => {
-    if (!queue.length) {
-      queue = shuffle(scenes);
-      if (queue[0] === last) queue.push(queue.shift());
-    }
+    if (!queue.length) queue = shuffleScenes(last);
     return (last = queue.shift()).id;
   };
 }
